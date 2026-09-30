@@ -1,0 +1,32 @@
+{
+  "name": "Meu Horário Escolar",
+  "short_name": "Horário",
+  "description": "Horário escolar do professor, com turmas, notificações e backup.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f0f5ff",
+  "theme_color": "#2563eb",
+  "lang": "pt-BR",
+  "categories": ["education", "productivity"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Ver calendário",
+      "short_name": "Calendário",
+      "url": "./?modo=calendario",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Ver grade da semana",
+      "short_name": "Semana",
+      "url": "./?modo=semana",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

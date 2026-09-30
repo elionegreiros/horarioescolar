@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gerar Ícones do App</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:24px;max-width:560px;margin:auto;background:#f2f2f7;color:#1c1c1e}
+  h1{color:#4f46e5;margin:0 0 8px}
+  p{color:#555;line-height:1.5}
+  button{background:#4f46e5;color:#fff;border:0;padding:14px 26px;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer;margin-top:16px}
+  button:active{transform:scale(.97)}
+  .ok{color:#10b981;margin-top:20px;font-weight:600}
+  .prev{display:flex;gap:20px;margin-top:20px;align-items:center}
+  .prev img{border-radius:22%;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+  .prev img.mask{border-radius:50%}
+</style>
+</head>
+<body>
+<h1>Gerar ícones do app</h1>
+<p>Clique no botão abaixo para baixar os <b>três</b> ícones PNG que o Chrome precisa para instalar seu app.</p>
+<canvas id="c" style="display:none"></canvas>
+<button onclick="gerar()">Baixar ícones PNG</button>
+<div class="ok" id="msg"></div>
+<div class="prev" id="prev"></div>
+
+<script>
+function desenhar(tam, maskable){
+  const c = document.getElementById('c');
+  c.width = tam; c.height = tam;
+  const ctx = c.getContext('2d');
+
+  // Para maskable: fundo sólido cobrindo todo o quadrado (safe zone 80%)
+  // Para normal: cantos arredondados
+  if (maskable) {
+    ctx.fillStyle = '#4f46e5';
+    ctx.fillRect(0, 0, tam, tam);
+  } else {
+    const r = tam * 0.22;
+    ctx.fillStyle = '#4f46e5';
+    ctx.beginPath();
+    ctx.roundRect(0, 0, tam, tam, r);
+    ctx.fill();
+  }
+
+  // Conteúdo central — para maskable, reduzir a arte para caber na safe zone (80%)
+  const escala = maskable ? 0.62 : 0.6;      // maskable usa área menor
+  const m = tam * (1 - escala) / 2;
+  const cw = tam - m * 2, ch = tam - m * 2;
+  const rCard = tam * 0.07;
+
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.roundRect(m, m, cw, ch, rCard);
+  ctx.fill();
+
+  ctx.fillStyle = '#ef4444';
+  ctx.beginPath();
+  ctx.roundRect(m, m, cw, ch * 0.28, [rCard, rCard, 0, 0]);
+  ctx.fill();
+
+  ctx.fillStyle = '#4f46e5';
+  const dotR = tam * 0.028;
+  const sx = m + cw * 0.18, sy = m + ch * 0.5;
+  const gx = cw * 0.22, gy = ch * 0.22;
+  for (let row = 0; row < 2; row++) {
+    for (let col = 0; col < 3; col++) {
+      ctx.beginPath();
+      ctx.arc(sx + col * gx, sy + row * gy, dotR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  return c.toDataURL('image/png');
+}
+
+function baixar(dados, nome){
+  const a = document.createElement('a');
+  a.href = dados; a.download = nome; a.click();
+}
+
+function gerar(){
+  const d192 = desenhar(192, false);
+  const d512 = desenhar(512, false);
+  const d512m = desenhar(512, true);
+
+  setTimeout(() => baixar(d192, 'icon-192.png'), 100);
+  setTimeout(() => baixar(d512, 'icon-512.png'), 400);
+  setTimeout(() => baixar(d512m, 'icon-maskable-512.png'), 700);
+
+  document.getElementById('msg').textContent =
+    '✅ Baixados! Coloque os três arquivos na pasta do app.';
+  document.getElementById('prev').innerHTML =
+    '<img src="' + d192 + '" width="96" height="96">' +
+    '<img src="' + d512 + '" width="96" height="96">' +
+    '<img class="mask" src="' + d512m + '" width="96" height="96">';
+}
+</script>
+</body>
+</html>
