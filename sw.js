@@ -1,4 +1,4 @@
-const CACHE_NAME = 'horario-v9';
+const CACHE_NAME = 'horario-v11';
 const ASSETS = [
   './',
   './index.html',
@@ -9,8 +9,6 @@ const ASSETS = [
   './icon-512.png'
 ];
 
-// Instala: cada arquivo é cacheado individualmente.
-// Se um falhar, os outros continuam e a instalação NÃO quebra.
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -26,7 +24,6 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Ativa: limpa caches antigos
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -37,7 +34,6 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: cache-first com atualização em background
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   let request = event.request;
@@ -60,7 +56,6 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Clique na notificação: abre/foca o app
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   event.waitUntil(

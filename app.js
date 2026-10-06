@@ -491,7 +491,7 @@ function formatarContagem(seg){
 }
 
 /* ═══════════════════════════════════════════════════════════
-   IMAGEM DE AULAS (COMPARTILHAR) — NOVO
+   IMAGEM DE AULAS (COMPARTILHAR)
    ═══════════════════════════════════════════════════════════ */
 function drawRoundedRect(ctx, x, y, w, h, r){
   ctx.beginPath();
@@ -550,11 +550,9 @@ function gerarImagemAulas(dia, aulas){
   const ctx = canvas.getContext('2d');
   ctx.scale(scale, scale);
 
-  // Fundo
   ctx.fillStyle = '#f4f4f8';
   ctx.fillRect(0, 0, W, H);
 
-  // Header gradiente
   const grad = ctx.createLinearGradient(0, 0, W, headerH);
   grad.addColorStop(0, '#4f46e5');
   grad.addColorStop(0.5, '#6366f1');
@@ -562,27 +560,23 @@ function gerarImagemAulas(dia, aulas){
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, headerH);
 
-  // Círculos decorativos no header
   ctx.globalAlpha = 0.08;
   ctx.fillStyle = '#fff';
   ctx.beginPath(); ctx.arc(W - 100, 60, 220, 0, Math.PI * 2); ctx.fill();
   ctx.beginPath(); ctx.arc(80, headerH - 40, 160, 0, Math.PI * 2); ctx.fill();
   ctx.globalAlpha = 1;
 
-  // Nome do dia
   ctx.fillStyle = '#fff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = 'bold 96px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.fillText(DIAS[dia], W / 2, 130);
 
-  // Subtítulo
   ctx.globalAlpha = 0.85;
   ctx.font = '500 34px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.fillText(`Meu Horário · ${aulas.length} aula${aulas.length === 1 ? '' : 's'}`, W / 2, 210);
   ctx.globalAlpha = 1;
 
-  // Cards
   const cardW = W - cardPadding * 2;
 
   if(aulas.length === 0){
@@ -598,43 +592,34 @@ function gerarImagemAulas(dia, aulas){
       const y = startY + i * (cardH + cardGap);
       const cor = COR_TURMA_SOLID[aula.turma] || '#2563eb';
 
-      // Sombra
       ctx.shadowColor = 'rgba(15, 23, 42, 0.08)';
       ctx.shadowBlur = 24;
       ctx.shadowOffsetY = 6;
-
-      // Card
       ctx.fillStyle = '#ffffff';
       drawRoundedRect(ctx, cardPadding, y, cardW, cardH, 24);
       ctx.fill();
-
       ctx.shadowColor = 'transparent';
       ctx.shadowBlur = 0;
       ctx.shadowOffsetY = 0;
 
-      // Barra colorida
       ctx.fillStyle = cor;
       drawRoundedRectLeft(ctx, cardPadding, y, 10, cardH, 24);
       ctx.fill();
 
-      // Hora início
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
       ctx.fillStyle = '#0a1428';
       ctx.font = 'bold 60px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.fillText(aula.ini, cardPadding + 48, y + 78);
 
-      // Hora fim
       ctx.fillStyle = '#94a3b8';
       ctx.font = '500 30px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.fillText(aula.fim || '—', cardPadding + 48, y + 120);
 
-      // Turma
       ctx.fillStyle = cor;
       ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.fillText(String(aula.turma).toUpperCase(), cardPadding + 300, y + 56);
 
-      // Matéria (com quebra de linha se necessário)
       ctx.fillStyle = '#0a1428';
       ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, sans-serif';
       const materiaTexto = aula.materia || 'Aula';
@@ -646,7 +631,6 @@ function gerarImagemAulas(dia, aulas){
     });
   }
 
-  // Footer
   ctx.fillStyle = '#94a3b8';
   ctx.font = '500 26px -apple-system, BlinkMacSystemFont, sans-serif';
   ctx.textAlign = 'center';
@@ -668,7 +652,6 @@ async function compartilharImagemAulas(dia, aulas){
       if(!blob){ toast('Falha ao gerar imagem'); return; }
       const nomeArquivo = `aulas-${DIAS[dia].toLowerCase()}.png`;
       const file = new File([blob], nomeArquivo, { type: 'image/png' });
-
       if(navigator.canShare && navigator.canShare({ files: [file] })){
         try{
           await navigator.share({
@@ -677,12 +660,8 @@ async function compartilharImagemAulas(dia, aulas){
             text: `Minhas aulas de ${DIAS[dia]}`
           });
           return;
-        }catch(e){
-          if(e.name === 'AbortError') return;
-        }
+        }catch(e){ if(e.name === 'AbortError') return; }
       }
-
-      // Fallback: download
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -697,7 +676,6 @@ async function compartilharImagemAulas(dia, aulas){
   }
 }
 
-/* Gerar imagem da SEMANA inteira (uma seção por dia) */
 function gerarImagemSemana(){
   const dias = ORDEM.filter(d => S.aulas.some(a => a.dia === d));
   const W = 1080;
@@ -710,7 +688,6 @@ function gerarImagemSemana(){
   const dayGap = 40;
   const footerH = 100;
 
-  // Calcular altura total
   let conteudoH = 0;
   dias.forEach(d => {
     const aulas = S.aulas.filter(a => a.dia === d).sort((a,b) => a.ini.localeCompare(b.ini));
@@ -726,11 +703,9 @@ function gerarImagemSemana(){
   const ctx = canvas.getContext('2d');
   ctx.scale(scale, scale);
 
-  // Fundo
   ctx.fillStyle = '#f4f4f8';
   ctx.fillRect(0, 0, W, H);
 
-  // Header
   const grad = ctx.createLinearGradient(0, 0, W, headerH);
   grad.addColorStop(0, '#4f46e5');
   grad.addColorStop(0.5, '#6366f1');
@@ -756,19 +731,16 @@ function gerarImagemSemana(){
   ctx.fillText(`Meu Horário · ${totalAulas} aulas na semana`, W / 2, 210);
   ctx.globalAlpha = 1;
 
-  // Conteúdo
   let y = startY;
   dias.forEach(d => {
     const aulas = S.aulas.filter(a => a.dia === d).sort((a,b) => a.ini.localeCompare(b.ini));
 
-    // Cabeçalho do dia
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#0a1428';
     ctx.font = 'bold 52px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.fillText(DIAS[d], padding, y + dayHeaderH / 2);
 
-    // Linha horizontal
     ctx.strokeStyle = 'rgba(10, 20, 40, 0.08)';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -779,7 +751,6 @@ function gerarImagemSemana(){
 
     y += dayHeaderH;
 
-    // Cards do dia (compactos)
     aulas.forEach(aula => {
       const cor = COR_TURMA_SOLID[aula.turma] || '#2563eb';
 
@@ -797,24 +768,20 @@ function gerarImagemSemana(){
       drawRoundedRectLeft(ctx, padding, y, 8, cardH, 20);
       ctx.fill();
 
-      // Hora início
       ctx.fillStyle = '#0a1428';
       ctx.font = 'bold 44px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       ctx.fillText(aula.ini, padding + 40, y + cardH / 2 - 8);
 
-      // Hora fim
       ctx.fillStyle = '#94a3b8';
       ctx.font = '500 22px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.fillText(aula.fim || '—', padding + 40, y + cardH / 2 + 30);
 
-      // Turma
       ctx.fillStyle = cor;
       ctx.font = 'bold 20px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.fillText(String(aula.turma).toUpperCase(), padding + 260, y + 50);
 
-      // Matéria
       ctx.fillStyle = '#0a1428';
       ctx.font = 'bold 32px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.fillText(aula.materia || 'Aula', padding + 260, y + 92);
@@ -824,7 +791,6 @@ function gerarImagemSemana(){
     y += dayGap - cardGap;
   });
 
-  // Footer
   ctx.fillStyle = '#94a3b8';
   ctx.font = '500 26px -apple-system, BlinkMacSystemFont, sans-serif';
   ctx.textAlign = 'center';
@@ -844,7 +810,6 @@ async function compartilharImagemSemana(){
       if(!blob){ toast('Falha ao gerar imagem'); return; }
       const nomeArquivo = 'minha-semana.png';
       const file = new File([blob], nomeArquivo, { type: 'image/png' });
-
       if(navigator.canShare && navigator.canShare({ files: [file] })){
         try{
           await navigator.share({
@@ -853,11 +818,8 @@ async function compartilharImagemSemana(){
             text: 'Minha grade semanal'
           });
           return;
-        }catch(e){
-          if(e.name === 'AbortError') return;
-        }
+        }catch(e){ if(e.name === 'AbortError') return; }
       }
-
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -870,6 +832,599 @@ async function compartilharImagemSemana(){
     console.error(e);
     toast('Erro ao gerar imagem');
   }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ATA DE CHAMADA — imagem + texto
+   ═══════════════════════════════════════════════════════════ */
+const STATUS_ATA = {
+  presente:    { emoji:'✅', label:'Presente',    cor:'#10b981', soft:'#d1fae5' },
+  ausente:     { emoji:'❌', label:'Ausente',     cor:'#ef4444', soft:'#fee2e2' },
+  justificado: { emoji:'📋', label:'Justificado', cor:'#f59e0b', soft:'#fef3c7' },
+  pendente:    { emoji:'⏳', label:'Pendente',    cor:'#94a3b8', soft:'#e5e7eb' }
+};
+
+function montarDadosAta(aula, dataRef){
+  const alunos = S.alunos.filter(a => a.turma === aula.turma).sort((a,b) => a.nome.localeCompare(b.nome));
+  const linhas = alunos.map(al => {
+    const st = getStatusAluno(aula.id, dataRef, al.id);
+    const reg = getRegistroAluno(aula.id, dataRef, al.id);
+    const badges = [];
+    if(reg.trabalho)  badges.push('TRAB');
+    if(reg.prova)     badges.push('PROV');
+    if(reg.atividade) badges.push('ATIV');
+    if(reg.nota != null) badges.push('Nota ' + reg.nota);
+    return { aluno: al, status: st, badges };
+  });
+  let pres = 0, aus = 0, jus = 0, pen = 0;
+  linhas.forEach(l => {
+    if(l.status === 'presente') pres++;
+    else if(l.status === 'ausente') aus++;
+    else if(l.status === 'justificado') jus++;
+    else pen++;
+  });
+  const total = alunos.length;
+  const freq = (pres + aus + jus) ? Math.round(pres / (pres + aus + jus) * 100) : 0;
+  return { aula, dataRef, linhas, total, pres, aus, jus, pen, freq };
+}
+
+function gerarImagemAtaAula(dados){
+  const { aula, dataRef, linhas, total, pres, aus, jus, freq } = dados;
+
+  const W = 1080;
+  const padding = 56;
+  const cardW = W - padding * 2;
+  const headerH = 320;
+  const infoH = 200;
+  const rowH = 78;
+  const rowGap = 12;
+  const resumoH = 180;
+  const signH = 120;
+  const footerH = 80;
+  const startList = headerH + infoH + 30;
+  const n = linhas.length;
+  const H = startList + n * (rowH + rowGap) - rowGap + resumoH + signH + footerH;
+
+  const canvas = document.createElement('canvas');
+  const scale = 2;
+  canvas.width = W * scale;
+  canvas.height = H * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = '#f4f4f8';
+  ctx.fillRect(0, 0, W, H);
+
+  const grad = ctx.createLinearGradient(0, 0, W, headerH);
+  grad.addColorStop(0, '#1e40af');
+  grad.addColorStop(0.5, '#2563eb');
+  grad.addColorStop(1, '#0ea5e9');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, headerH);
+
+  ctx.globalAlpha = 0.08;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(W - 100, 60, 220, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(80, headerH - 40, 160, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 34px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.globalAlpha = 0.85;
+  ctx.fillText('ATA DE CHAMADA', W / 2, 70);
+  ctx.globalAlpha = 1;
+
+  const [yy, mm, dd] = dataRef.split('-').map(Number);
+  const dataObj = new Date(yy, mm-1, dd);
+  const diaSemana = DIAS[dataObj.getDay()];
+  ctx.font = 'bold 78px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(`${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}/${yy}`, W / 2, 150);
+
+  ctx.globalAlpha = 0.9;
+  ctx.font = '500 32px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(diaSemana, W / 2, 215);
+  ctx.globalAlpha = 1;
+
+  const infoY = headerH + 20;
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.08)';
+  ctx.shadowBlur = 20;
+  ctx.shadowOffsetY = 4;
+  drawRoundedRect(ctx, padding, infoY, cardW, infoH - 20, 24);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  const corTurma = COR_TURMA_SOLID[aula.turma] || '#2563eb';
+  ctx.fillStyle = corTurma;
+  drawRoundedRectLeft(ctx, padding, infoY, 10, infoH - 20, 24);
+  ctx.fill();
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'bold 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText('TURMA', padding + 48, infoY + 50);
+  ctx.fillStyle = '#0a1428';
+  ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(aula.turma, padding + 48, infoY + 90);
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'bold 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText('MATÉRIA', padding + 48, infoY + 135);
+  ctx.fillStyle = '#0a1428';
+  ctx.font = 'bold 32px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(aula.materia || 'Aula', padding + 48, infoY + 168);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'bold 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText('HORÁRIO', W - padding - 48, infoY + 50);
+  ctx.fillStyle = corTurma;
+  ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(aula.ini, W - padding - 48, infoY + 90);
+  if(aula.fim){
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 26px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('até ' + aula.fim, W - padding - 48, infoY + 130);
+  }
+
+  let y = startList;
+  if(!linhas.length){
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = 'rgba(15, 23, 42, 0.06)';
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 4;
+    drawRoundedRect(ctx, padding, y, cardW, rowH, 18);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 28px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('Nenhum aluno cadastrado nesta turma', W / 2, y + rowH / 2);
+  } else {
+    linhas.forEach(linha => {
+      const st = STATUS_ATA[linha.status];
+      const corSt = st.cor;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = 'rgba(15, 23, 42, 0.05)';
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 2;
+      drawRoundedRect(ctx, padding, y, cardW, rowH, 18);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+
+      ctx.fillStyle = corSt;
+      drawRoundedRectLeft(ctx, padding, y, 6, rowH, 18);
+      ctx.fill();
+
+      ctx.fillStyle = st.soft;
+      ctx.beginPath();
+      ctx.arc(padding + 50, y + rowH / 2, 22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = '26px -apple-system, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(st.emoji, padding + 50, y + rowH / 2 + 2);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#0a1428';
+      ctx.font = 'bold 26px -apple-system, BlinkMacSystemFont, sans-serif';
+      const nomeFinal = linha.aluno.nome;
+      let nomeExibido = nomeFinal;
+      const maxNomeW = cardW - 300;
+      while(ctx.measureText(nomeExibido).width > maxNomeW && nomeExibido.length > 10){
+        nomeExibido = nomeExibido.slice(0, -2);
+      }
+      if(nomeExibido !== nomeFinal) nomeExibido = nomeExibido.slice(0, -1) + '…';
+      ctx.fillText(nomeExibido, padding + 95, y + rowH / 2 + 2);
+
+      if(linha.badges.length){
+        let bx = W - padding - 20;
+        ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textBaseline = 'middle';
+        for(let i = linha.badges.length - 1; i >= 0; i--){
+          const txt = linha.badges[i];
+          const tw = ctx.measureText(txt).width + 20;
+          bx -= tw;
+          ctx.fillStyle = corTurma;
+          ctx.globalAlpha = 0.15;
+          drawRoundedRect(ctx, bx, y + rowH/2 - 14, tw, 28, 14);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = corTurma;
+          ctx.textAlign = 'center';
+          ctx.fillText(txt, bx + tw/2, y + rowH/2 + 1);
+          bx -= 6;
+        }
+        ctx.textAlign = 'left';
+      }
+
+      y += rowH + rowGap;
+    });
+  }
+
+  y += 10;
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.08)';
+  ctx.shadowBlur = 20;
+  ctx.shadowOffsetY = 4;
+  drawRoundedRect(ctx, padding, y, cardW, resumoH - 20, 24);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const metrics = [
+    { lbl: 'TOTAL', val: total, cor: '#0a1428' },
+    { lbl: 'PRESENTES', val: pres, cor: '#10b981' },
+    { lbl: 'AUSENTES', val: aus, cor: '#ef4444' },
+    { lbl: 'JUSTIF.', val: jus, cor: '#f59e0b' }
+  ];
+  const colW = (cardW - 40) / 4;
+  metrics.forEach((m, i) => {
+    const cx = padding + 20 + colW * i + colW / 2;
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 20px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(m.lbl, cx, y + 55);
+    ctx.fillStyle = m.cor;
+    ctx.font = 'bold 46px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(String(m.val), cx, y + 105);
+  });
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '500 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(`Frequência do dia: ${freq}%`, W / 2, y + 150);
+
+  y += resumoH;
+
+  ctx.strokeStyle = 'rgba(10, 20, 40, 0.25)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(padding + 100, y + 60);
+  ctx.lineTo(W - padding - 100, y + 60);
+  ctx.stroke();
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '500 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Assinatura do Professor', W / 2, y + 90);
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '500 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('horarioescola.netlify.app', W / 2, H - 40);
+
+  return canvas;
+}
+
+function gerarImagemAtaDia(dataRef, aulasComChamada){
+  const W = 1080;
+  const padding = 56;
+  const cardW = W - padding * 2;
+  const headerH = 320;
+  const aulaHeaderH = 130;
+  const rowH = 62;
+  const rowGap = 8;
+  const resumoAulaH = 110;
+  const aulaGap = 60;
+  const footerH = 100;
+
+  let conteudoH = 0;
+  aulasComChamada.forEach(d => {
+    const n = d.linhas.length;
+    conteudoH += aulaHeaderH + n * (rowH + rowGap) - rowGap + resumoAulaH + aulaGap;
+  });
+  const startY = headerH + 30;
+  const H = startY + conteudoH + footerH;
+
+  const canvas = document.createElement('canvas');
+  const scale = 2;
+  canvas.width = W * scale;
+  canvas.height = H * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = '#f4f4f8';
+  ctx.fillRect(0, 0, W, H);
+
+  const grad = ctx.createLinearGradient(0, 0, W, headerH);
+  grad.addColorStop(0, '#1e40af');
+  grad.addColorStop(0.5, '#2563eb');
+  grad.addColorStop(1, '#0ea5e9');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, headerH);
+
+  ctx.globalAlpha = 0.08;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(W - 100, 60, 220, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(80, headerH - 40, 160, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 34px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.globalAlpha = 0.85;
+  ctx.fillText('ATA DO DIA', W / 2, 70);
+  ctx.globalAlpha = 1;
+
+  const [yy, mm, dd] = dataRef.split('-').map(Number);
+  const diaSemana = DIAS[new Date(yy, mm-1, dd).getDay()];
+  ctx.font = 'bold 78px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(`${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}/${yy}`, W / 2, 150);
+
+  ctx.globalAlpha = 0.9;
+  ctx.font = '500 32px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(`${diaSemana} · ${aulasComChamada.length} aula${aulasComChamada.length === 1 ? '' : 's'}`, W / 2, 215);
+  ctx.globalAlpha = 1;
+
+  let y = startY;
+  aulasComChamada.forEach((d) => {
+    const aula = d.aula;
+    const corTurma = COR_TURMA_SOLID[aula.turma] || '#2563eb';
+
+    ctx.fillStyle = '#0a1428';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(aula.turma, padding, y + 40);
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 26px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(`${aula.materia || 'Aula'} · ${aula.ini}${aula.fim ? ' – ' + aula.fim : ''}`, padding, y + 85);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = d.freq >= 90 ? '#10b981' : d.freq >= 75 ? '#f59e0b' : '#ef4444';
+    ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(`${d.freq}%`, W - padding, y + 40);
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 22px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(`${d.pres}P · ${d.aus}A · ${d.jus}J`, W - padding, y + 85);
+
+    ctx.strokeStyle = 'rgba(10, 20, 40, 0.08)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(padding, y + aulaHeaderH - 20);
+    ctx.lineTo(W - padding, y + aulaHeaderH - 20);
+    ctx.stroke();
+
+    y += aulaHeaderH;
+
+    d.linhas.forEach(linha => {
+      const st = STATUS_ATA[linha.status];
+
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = 'rgba(15, 23, 42, 0.04)';
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetY = 2;
+      drawRoundedRect(ctx, padding, y, cardW, rowH, 14);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+
+      ctx.fillStyle = st.cor;
+      drawRoundedRectLeft(ctx, padding, y, 5, rowH, 14);
+      ctx.fill();
+
+      ctx.font = '22px -apple-system, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(st.emoji, padding + 22, y + rowH / 2 + 1);
+
+      ctx.fillStyle = '#0a1428';
+      ctx.font = 'bold 22px -apple-system, BlinkMacSystemFont, sans-serif';
+      let nome = linha.aluno.nome;
+      const maxW = cardW - 260;
+      while(ctx.measureText(nome).width > maxW && nome.length > 10){
+        nome = nome.slice(0, -2);
+      }
+      if(nome !== linha.aluno.nome) nome = nome.slice(0, -1) + '…';
+      ctx.fillText(nome, padding + 62, y + rowH / 2 + 1);
+
+      if(linha.badges.length){
+        let bx = W - padding - 14;
+        ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        for(let i = linha.badges.length - 1; i >= 0; i--){
+          const txt = linha.badges[i];
+          const tw = ctx.measureText(txt).width + 16;
+          bx -= tw;
+          ctx.fillStyle = corTurma;
+          ctx.globalAlpha = 0.15;
+          drawRoundedRect(ctx, bx, y + rowH/2 - 11, tw, 22, 11);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = corTurma;
+          ctx.fillText(txt, bx + tw/2, y + rowH/2 + 1);
+          bx -= 4;
+        }
+        ctx.textAlign = 'left';
+      }
+
+      y += rowH + rowGap;
+    });
+    y += aulaGap - rowGap + resumoAulaH - aulaHeaderH;
+  });
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '500 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('horarioescola.netlify.app', W / 2, H - 44);
+
+  return canvas;
+}
+
+function gerarTextoAtaAula(dados){
+  const { aula, dataRef, linhas, total, pres, aus, jus, freq } = dados;
+  const [yy, mm, dd] = dataRef.split('-').map(Number);
+  const diaSemana = DIAS[new Date(yy, mm-1, dd).getDay()];
+
+  const cabecalho = [
+    `📋 *ATA DE CHAMADA*`,
+    `${diaSemana}, ${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}/${yy}`,
+    ``,
+    `🏫 Turma: ${aula.turma}`,
+    `📚 ${aula.materia || 'Aula'}`,
+    `🕐 ${aula.ini}${aula.fim ? ' – ' + aula.fim : ''}`,
+    ``,
+    `━━━━━━━━━━━━━━━━━`
+  ].join('\n');
+
+  const corpo = linhas.map(l => {
+    const st = STATUS_ATA[l.status];
+    const badge = l.badges.length ? `  _[${l.badges.join(' · ')}]_` : '';
+    return `${st.emoji} ${l.aluno.nome}${badge}`;
+  }).join('\n');
+
+  const rodape = [
+    `━━━━━━━━━━━━━━━━━`,
+    `Total: *${total}* alunos`,
+    `✅ ${pres} presentes`,
+    `❌ ${aus} ausentes`,
+    `📋 ${jus} justificados`,
+    `📊 Frequência: *${freq}%*`,
+    ``,
+    `— ${S.config.nomeProf || 'Professor'}`
+  ].join('\n');
+
+  return [cabecalho, corpo, rodape].join('\n');
+}
+
+function gerarTextoAtaDia(dataRef, aulasComChamada){
+  const [yy, mm, dd] = dataRef.split('-').map(Number);
+  const diaSemana = DIAS[new Date(yy, mm-1, dd).getDay()];
+
+  const cabecalho = [
+    `📋 *ATA DO DIA*`,
+    `${diaSemana}, ${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}/${yy}`,
+    `${aulasComChamada.length} aula${aulasComChamada.length === 1 ? '' : 's'}`
+  ].join('\n');
+
+  const blocos = aulasComChamada.map(d => {
+    const aula = d.aula;
+    const linhas = d.linhas.map(l => {
+      const st = STATUS_ATA[l.status];
+      const badge = l.badges.length ? ` _[${l.badges.join(',')}]_` : '';
+      return `${st.emoji} ${l.aluno.nome}${badge}`;
+    }).join('\n');
+    return [
+      ``,
+      `━━━━━━━━━━━━━━━━━`,
+      `🏫 *${aula.turma}* · ${aula.materia || 'Aula'}`,
+      `🕐 ${aula.ini}${aula.fim ? ' – ' + aula.fim : ''}`,
+      `📊 ${d.freq}% (${d.pres}P / ${d.aus}A / ${d.jus}J)`,
+      ``,
+      linhas
+    ].join('\n');
+  }).join('\n');
+
+  const rodape = [
+    ``,
+    `━━━━━━━━━━━━━━━━━`,
+    `— ${S.config.nomeProf || 'Professor'}`
+  ].join('\n');
+
+  return cabecalho + blocos + rodape;
+}
+
+async function compartilharAtaImagem(canvas, nomeArquivo, titulo){
+  return new Promise(resolve => {
+    canvas.toBlob(async (blob) => {
+      if(!blob){ toast('Falha ao gerar imagem'); resolve(false); return; }
+      const file = new File([blob], nomeArquivo, { type: 'image/png' });
+      if(navigator.canShare && navigator.canShare({ files: [file] })){
+        try{
+          await navigator.share({ files: [file], title: titulo });
+          resolve(true);
+          return;
+        }catch(e){ if(e.name === 'AbortError'){ resolve(true); return; } }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nomeArquivo;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('Imagem baixada');
+      resolve(true);
+    }, 'image/png');
+  });
+}
+
+function abrirModalAta(dados, tipo){
+  const titulo = tipo === 'aula' ? 'Compartilhar ata da aula' : 'Compartilhar ata do dia';
+  const subtitulo = tipo === 'aula'
+    ? `${dados.aula.turma} · ${dados.aula.materia || 'Aula'}`
+    : `${dados.aulasComChamada.length} aula${dados.aulasComChamada.length === 1 ? '' : 's'} com chamada`;
+
+  abrirModal(`
+    <h2>${titulo}</h2>
+    <p style="font-size:14px;color:var(--text-2);font-weight:600;margin:-8px 0 20px">${esc(subtitulo)}</p>
+
+    <button class="share-btn" id="ata-img" style="margin-bottom:10px">
+      ${ico('i-share','ico-20')}
+      <div style="text-align:left;flex:1">
+        <div>Compartilhar como imagem</div>
+        <small style="display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:3px">
+          PNG · Ideal para WhatsApp e impressão
+        </small>
+      </div>
+    </button>
+
+    <button class="share-btn" id="ata-txt">
+      ${ico('i-note','ico-20')}
+      <div style="text-align:left;flex:1">
+        <div>Compartilhar como texto</div>
+        <small style="display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:3px">
+          Rápido para colar em e-mail ou chat
+        </small>
+      </div>
+    </button>
+
+    <div class="botoes-f">
+      <button class="btn-f secundario" id="btn-fechar">Cancelar</button>
+    </div>
+  `);
+
+  $('#btn-fechar').onclick = fecharModal;
+
+  $('#ata-img').onclick = async () => {
+    fecharModal();
+    toast('Gerando imagem...');
+    const canvas = tipo === 'aula'
+      ? gerarImagemAtaAula(dados)
+      : gerarImagemAtaDia(dados.dataRef, dados.aulasComChamada);
+    const nome = tipo === 'aula'
+      ? `ata-${dados.aula.turma.toLowerCase().replace(/\s+/g,'-')}-${dados.dataRef}.png`
+      : `ata-dia-${dados.dataRef}.png`;
+    await compartilharAtaImagem(canvas, nome, titulo);
+  };
+
+  $('#ata-txt').onclick = async () => {
+    fecharModal();
+    const texto = tipo === 'aula'
+      ? gerarTextoAtaAula(dados)
+      : gerarTextoAtaDia(dados.dataRef, dados.aulasComChamada);
+    await compartilharTexto(titulo, texto);
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -952,7 +1507,6 @@ function renderMain(){
   else if(S.tab === 'alunos') renderAlunos(main);
   else if(S.tab === 'config') renderConfig(main);
 }
-
 function renderCalendario(main){
   const card = document.createElement('div');
   card.className = 'card';
@@ -1024,17 +1578,29 @@ function renderCalendario(main){
   const feriadoSel = S.config.feriados.includes(S.calDiaAtivo);
   const ehHojeSel = S.calDiaAtivo === chHoje;
 
-  /* ⬇️ NOVO: botão de compartilhar no header do dia */
   const sec = document.createElement('div');
   sec.className = 'section-h';
   sec.innerHTML = `${ico('i-calendar','ico-20 lead')}<h3>${dd} de ${MESES[m-1]} · ${DIAS[dowSel]}</h3>
     <span class="count">${aulasSel.length} aula${aulasSel.length===1?'':'s'}</span>
-    <button class="share-day-btn" id="btn-share-day" title="Compartilhar como imagem">${ico('i-share','ico-16')}</button>`;
+    <button class="share-day-btn" id="btn-ata-dia" title="Ata do dia" style="margin-right:6px">${ico('i-clipboard','ico-16')}</button>
+    <button class="share-day-btn" id="btn-share-day" title="Compartilhar aulas como imagem">${ico('i-share','ico-16')}</button>`;
   main.appendChild(sec);
   if(aulasSel.length && !feriadoSel){
     sec.querySelector('#btn-share-day').onclick = () => compartilharImagemAulas(dowSel, aulasSel);
+    sec.querySelector('#btn-ata-dia').onclick = () => {
+      const dataRefAta = S.calDiaAtivo;
+      const aulasComChamada = aulasSel
+        .map(a => montarDadosAta(a, dataRefAta))
+        .filter(d => d.pres + d.aus + d.jus > 0);
+      if(!aulasComChamada.length){
+        toast('Nenhuma chamada registrada neste dia');
+        return;
+      }
+      abrirModalAta({ dataRef: dataRefAta, aulasComChamada }, 'dia');
+    };
   } else {
     sec.querySelector('#btn-share-day').style.display = 'none';
+    sec.querySelector('#btn-ata-dia').style.display = 'none';
   }
 
   if(feriadoSel){
@@ -1197,7 +1763,6 @@ function atualizarContagens(){
 function renderSemana(main){
   pararTickContagem();
 
-  /* ⬇️ NOVO: botão compartilhar semana inteira */
   const topRow = document.createElement('div');
   topRow.style.cssText = 'display:flex;justify-content:flex-end;margin-top:4px;margin-bottom:4px';
   const bShare = document.createElement('button');
@@ -1427,6 +1992,16 @@ function renderChamada(main){
     todos.forEach(al => setStatusAluno(aulaSel, dataRef, al.id, 'presente'));
     render(); toast('Todos presentes');
   };
+  const bAta = document.createElement('button');
+  bAta.className = 'cfg-btn secundario';
+  bAta.style.cssText = 'margin-top:0;flex:0 0 48px;width:48px;height:48px;padding:0;display:grid;place-items:center;color:var(--primary)';
+  bAta.innerHTML = ico('i-share','ico-18');
+  bAta.title = 'Gerar ata de chamada';
+  bAta.onclick = () => {
+    const dados = montarDadosAta(aulaSel, dataRef);
+    if(!dados.linhas.length){ toast('Sem alunos nesta turma'); return; }
+    abrirModalAta(dados, 'aula');
+  };
   const bLimpar = document.createElement('button');
   bLimpar.className = 'cfg-btn secundario';
   bLimpar.style.cssText = 'margin-top:0;flex:0 0 48px;width:48px;height:48px;padding:0;display:grid;place-items:center;color:var(--muted)';
@@ -1442,7 +2017,7 @@ function renderChamada(main){
     });
     render(); toast('Chamada limpa');
   };
-  btnRow.appendChild(bTodos); btnRow.appendChild(bLimpar);
+  btnRow.appendChild(bTodos); btnRow.appendChild(bAta); btnRow.appendChild(bLimpar);
   main.appendChild(btnRow);
 
   const busca = (S.busca||'').toLowerCase().trim();
@@ -2278,7 +2853,7 @@ function renderConfig(main){
   const sb = blocoConfig(ico('i-info','ico-16')+' Sobre', []);
   const sc = document.createElement('div');
   sc.style.cssText = 'font-size:13px;color:var(--muted);line-height:1.7';
-  sc.innerHTML = `<b>Horário Profissional v6.2</b><br>PWA offline · Painel do professor<br>
+  sc.innerHTML = `<b>Horário Profissional v6.3</b><br>PWA offline · Painel do professor<br>
     ${S.alunos.length} alunos · ${S.aulas.length} aulas · ${TURMAS.length} turmas`;
   sb.appendChild(sc);
   main.appendChild(sb);
@@ -2517,7 +3092,7 @@ function verificarNotif(){
 }
 
 function exportar(){
-  const d = { versao:'6.2', exportadoEm: new Date().toISOString(),
+  const d = { versao:'6.3', exportadoEm: new Date().toISOString(),
     aulas:S.aulas, geral:S.geral, alunos:S.alunos, vistos:S.vistos,
     config:{ tema:S.config.tema, avisoMin:S.config.avisoMin,
       feriados:S.config.feriados, nomeProf:S.config.nomeProf,
