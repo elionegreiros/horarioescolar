@@ -1,4 +1,4 @@
-const CACHE_NAME = 'horario-v8';
+const CACHE_NAME = 'horario-v9';
 const ASSETS = [
   './',
   './index.html',
@@ -6,19 +6,27 @@ const ASSETS = [
   './app.js',
   './manifest.json',
   './icon-192.png',
-  './icon-512.png',
-  './icon-maskable-512.png'
+  './icon-512.png'
 ];
 
-// Instala e faz cache dos arquivos
+// Instala: cada arquivo é cacheado individualmente.
+// Se um falhar, os outros continuam e a instalação NÃO quebra.
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+    caches.open(CACHE_NAME).then((cache) => {
+      return Promise.all(
+        ASSETS.map(url =>
+          cache.add(url).catch(err => {
+            console.warn('[SW] Falha ao cachear', url, err);
+          })
+        )
+      );
+    })
   );
 });
 
-// Ativa e limpa caches antigos
+// Ativa: limpa caches antigos
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -29,15 +37,13 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Responde com cache primeiro e atualiza em background
+// Fetch: cache-first com atualização em background
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-
   let request = event.request;
   if (request.mode === 'navigate') {
     request = new Request('./index.html', { method: 'GET' });
   }
-
   event.respondWith(
     caches.match(request).then((cached) => {
       const fetchPromise = fetch(event.request)
@@ -54,7 +60,7 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Clique em uma notificação abre o app
+// Clique na notificação: abre/foca o app
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   event.waitUntil(

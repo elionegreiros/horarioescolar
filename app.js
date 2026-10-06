@@ -26,7 +26,6 @@ const DIAS_CURTO = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const ORDEM = [1,2,3,4,5,6,0];
 
-/* ═══════ ESCOLAS/TURMAS — agora TURMAS é mutável ═══════ */
 const ESCOLAS = [
   { nome:'Gentil Dantas', turmas:['1º ADM','1º Cont. Ambiental','2º Sistemas','2º ADM','3º Sistemas','3º Regular'] },
   { nome:'Enéas Nogueira', turmas:['8º Ano A','8º Ano B'] }
@@ -181,13 +180,10 @@ const SEED_AULAS = [
   {dia:5,ini:'16:10',fim:'17:10',turma:'2º Sistemas',materia:'Pensamento Computacional'}
 ];
 
-/* CONFIG_DEFAULT ganha 3 campos novos para gerenciar turmas */
 const CONFIG_DEFAULT = {
   tema:'auto', avisoMin:10, notifAtiva:false, feriados:[],
   nomeProf:'Antonio Elio dos Santos Negreiros',
-  turmasCustom: [],       // turmas adicionadas pelo usuário
-  turmasRemovidas: [],    // turmas hardcoded que foram excluídas
-  turmasRenomeadas: {}    // mapa { antigo: novo }
+  turmasCustom: [], turmasRemovidas: [], turmasRenomeadas: {}
 };
 
 const RENOMEAR = {
@@ -240,9 +236,7 @@ const S = {
   aulaChamadaId: null
 };
 
-/* ═══════ APLICAR CONFIG DE TURMAS (renomeações/remoções) ═══════ */
 function aplicarConfiguracoesTurmas(){
-  // 1) Remover turmas marcadas como removidas
   const removidas = S.config.turmasRemovidas || [];
   removidas.forEach(nome => {
     ESCOLAS.forEach(e => {
@@ -253,8 +247,6 @@ function aplicarConfiguracoesTurmas(){
     delete GRAD_TURMA[nome];
     delete COR_TURMA_SOLID[nome];
   });
-
-  // 2) Aplicar renomeações em ordem
   const renomeadas = S.config.turmasRenomeadas || {};
   Object.entries(renomeadas).forEach(([antigo, novo]) => {
     ESCOLAS.forEach(e => {
@@ -274,14 +266,10 @@ function aplicarConfiguracoesTurmas(){
       delete COR_TURMA_SOLID[antigo];
     }
   });
-
-  // 3) Recalcular lista global
   TURMAS = [
     ...ESCOLAS.flatMap(e => e.turmas),
     ...(S.config.turmasCustom || [])
   ];
-
-  // 4) Validar turma selecionada
   if(!TURMAS.includes(S.turmaAluno)){
     S.turmaAluno = TURMAS[0] || '';
   }
@@ -365,7 +353,6 @@ function abrirModal(html){
 function fecharModal(){ $('#modal').classList.remove('aberto'); }
 $('#modal').addEventListener('click', e => { if(e.target.id === 'modal') fecharModal(); });
 
-/* PRESENÇA / REGISTROS */
 function proximoStatus(atual){
   if(atual === 'presente') return 'ausente';
   if(atual === 'ausente') return 'justificado';
@@ -503,7 +490,6 @@ function formatarContagem(seg){
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
-/* ═══════ RENDER PRINCIPAL ═══════ */
 function render(){
   aplicarTema();
   renderHero();
@@ -582,7 +568,6 @@ function renderMain(){
   else if(S.tab === 'config') renderConfig(main);
 }
 
-/* CALENDÁRIO */
 function renderCalendario(main){
   const card = document.createElement('div');
   card.className = 'card';
@@ -936,7 +921,6 @@ function renderGeral(main){
   });
 }
 
-/* ABA ALUNOS */
 function renderAlunos(main){
   pararTickContagem();
   const subNav = document.createElement('div');
@@ -1303,7 +1287,6 @@ function abrirFiltroAlunos(){
   $('#btn-fechar').onclick = fecharModal;
 }
 
-/* PERFIL DO ALUNO */
 function abrirAluno(id){
   const a = S.alunos.find(x => x.id === id);
   if(!a) return;
@@ -1472,7 +1455,6 @@ function abrirNovoAluno(){
     const nome = $('#a-nome').value.trim();
     const turma = $('#a-turma').value.trim();
     if(!nome || !turma){ toast('Preencha nome e turma'); return; }
-    // Se a turma não existe, adiciona automaticamente
     if(!TURMAS.includes(turma)){
       S.config.turmasCustom = S.config.turmasCustom || [];
       if(!S.config.turmasCustom.includes(turma)){
@@ -1485,9 +1467,6 @@ function abrirNovoAluno(){
   };
 }
 
-/* ═══════════════════════════════════════════════════════════
-   COMPARTILHAMENTO
-   ═══════════════════════════════════════════════════════════ */
 async function compartilharTexto(titulo, texto){
   if(navigator.share){
     try{ await navigator.share({ title: titulo, text: texto }); return; }catch(e){}
@@ -1582,9 +1561,6 @@ function compartilharTurma(turma){
   ].join('\n'));
 }
 
-/* ═══════════════════════════════════════════════════════════
-   ⚙️ GERENCIAR TURMAS — NOVO!
-   ═══════════════════════════════════════════════════════════ */
 function abrirGerenciarTurmas(){
   const lista = TURMAS.map(t => {
     const qtd = S.alunos.filter(a => a.turma === t).length;
@@ -1601,18 +1577,15 @@ function abrirGerenciarTurmas(){
         <button class="turma-manage-btn danger" data-delete="${esc(t)}" title="Excluir">${ico('i-trash','ico-18')}</button>
       </div>`;
   }).join('');
-
   const temCustom = (S.config.turmasCustom || []).length > 0 ||
     (S.config.turmasRemovidas || []).length > 0 ||
     Object.keys(S.config.turmasRenomeadas || {}).length > 0;
-
   abrirModal(`
     <h2>Gerenciar turmas</h2>
     <div class="turma-manage-list">${lista}</div>
     <button class="cfg-btn primario" id="btn-nova-turma" style="margin-top:16px">${ico('i-plus','ico-18')} Nova turma</button>
     ${temCustom ? `<button class="cfg-btn secundario" id="btn-restaurar">${ico('i-refresh','ico-18')} Restaurar turmas originais</button>` : ''}
     <div class="botoes-f"><button class="btn-f secundario" id="btn-fechar">Fechar</button></div>`);
-
   $$('[data-rename]').forEach(b => { b.onclick = () => abrirRenomearTurma(b.dataset.rename); });
   $$('[data-delete]').forEach(b => { b.onclick = () => confirmarExcluirTurma(b.dataset.delete); });
   $('#btn-nova-turma').onclick = abrirNovaTurma;
@@ -1623,12 +1596,8 @@ function abrirGerenciarTurmas(){
 function abrirRenomearTurma(nomeAntigo){
   abrirModal(`
     <h2>Renomear turma</h2>
-    <label class="f">Nome atual
-      <input class="f" type="text" value="${esc(nomeAntigo)}" disabled style="opacity:.6">
-    </label>
-    <label class="f">Novo nome
-      <input class="f" type="text" id="rt-novo" value="${esc(nomeAntigo)}" maxlength="40" autocomplete="off">
-    </label>
+    <label class="f">Nome atual<input class="f" type="text" value="${esc(nomeAntigo)}" disabled style="opacity:.6"></label>
+    <label class="f">Novo nome<input class="f" type="text" id="rt-novo" value="${esc(nomeAntigo)}" maxlength="40" autocomplete="off"></label>
     <div style="background:var(--primary-soft);border-radius:14px;padding:14px;margin-top:8px;font-size:13px;color:var(--text-2);line-height:1.5">
       ${ico('i-info','ico-16')} Todos os alunos, aulas, chamadas e cores serão atualizados automaticamente.
     </div>
@@ -1651,30 +1620,19 @@ function abrirRenomearTurma(nomeAntigo){
 }
 
 function renomearTurma(antigo, novo){
-  // 1) Migrar todos os dados
   S.alunos.forEach(a => { if(a.turma === antigo) a.turma = novo; });
   S.aulas.forEach(a => { if(a.turma === antigo) a.turma = novo; });
   S.geral.forEach(a => { if(a.turma === antigo) a.turma = novo; });
   S.vistos.forEach(v => { if(v.turma === antigo) v.turma = novo; });
-
-  // 2) Salvar renomeação na config
   S.config.turmasRenomeadas = S.config.turmasRenomeadas || {};
   S.config.turmasRenomeadas[antigo] = novo;
-
-  // 3) Se era custom, atualizar o array
   if(S.config.turmasCustom){
     const i = S.config.turmasCustom.indexOf(antigo);
     if(i > -1) S.config.turmasCustom[i] = novo;
   }
-
-  // 4) Se a turma selecionada era a antiga, mudar
   if(S.turmaAluno === antigo) S.turmaAluno = novo;
-
-  // 5) Reaplicar configurações (recalcula TURMAS, atualiza ESCOLAS, GRAD, COR)
   aplicarConfiguracoesTurmas();
-
-  salvarTudo();
-  render();
+  salvarTudo(); render();
   toast(`Renomeada para "${novo}"`);
   abrirGerenciarTurmas();
 }
@@ -1682,9 +1640,7 @@ function renomearTurma(antigo, novo){
 function abrirNovaTurma(){
   abrirModal(`
     <h2>Nova turma</h2>
-    <label class="f">Nome da turma
-      <input class="f" type="text" id="nt-nome" maxlength="40" placeholder="Ex: 3º ADM" autocomplete="off">
-    </label>
+    <label class="f">Nome da turma<input class="f" type="text" id="nt-nome" maxlength="40" placeholder="Ex: 3º ADM" autocomplete="off"></label>
     <div style="background:var(--primary-soft);border-radius:14px;padding:14px;font-size:13px;color:var(--text-2);line-height:1.5">
       ${ico('i-info','ico-16')} A turma ficará disponível em todo o app para cadastrar alunos e aulas.
     </div>
@@ -1710,7 +1666,6 @@ function confirmarExcluirTurma(nome){
   const alunosDaTurma = S.alunos.filter(a => a.turma === nome);
   const qtd = alunosDaTurma.length;
   const aulasDaTurma = S.aulas.filter(a => a.turma === nome).length;
-
   if(qtd > 0){
     const outras = TURMAS.filter(t => t !== nome);
     if(!outras.length){
@@ -1750,7 +1705,6 @@ function confirmarExcluirTurma(nome){
     };
     return;
   }
-
   if(!confirm(`Excluir a turma "${nome}"?`)) return;
   removerTurmaDasListas(nome);
   salvarTudo(); render(); toast('Turma excluída');
@@ -1758,11 +1712,9 @@ function confirmarExcluirTurma(nome){
 }
 
 function removerTurmaDasListas(nome){
-  // Se era custom, remover da lista
   if(S.config.turmasCustom){
     S.config.turmasCustom = S.config.turmasCustom.filter(t => t !== nome);
   }
-  // Se era hardcoded, marcar como removida
   const ehHardcoded = ESCOLAS.some(e => e.turmas.includes(nome));
   if(ehHardcoded){
     S.config.turmasRemovidas = S.config.turmasRemovidas || [];
@@ -1774,13 +1726,10 @@ function removerTurmaDasListas(nome){
 }
 
 function restaurarTurmasOriginais(){
-  if(!confirm('Restaurar a lista original de turmas? As turmas personalizadas serão removidas e as renomeadas voltarão aos nomes originais.')) return;
-  // Limpar config de turmas
+  if(!confirm('Restaurar a lista original de turmas? As turmas personalizadas serão removidas e as renomeadas voltarão aos nomes originais. Os alunos permanecem com os nomes atuais.')) return;
   S.config.turmasCustom = [];
   S.config.turmasRemovidas = [];
   S.config.turmasRenomeadas = {};
-
-  // Restaurar ESCOLAS ao estado original hardcoded
   const originais = {
     'Gentil Dantas': ['1º ADM','1º Cont. Ambiental','2º Sistemas','2º ADM','3º Sistemas','3º Regular'],
     'Enéas Nogueira': ['8º Ano A','8º Ano B']
@@ -1788,13 +1737,10 @@ function restaurarTurmasOriginais(){
   ESCOLAS.forEach(e => {
     if(originais[e.nome]) e.turmas = [...originais[e.nome]];
   });
-
-  // Restaurar ESCOLA_DA_TURMA, GRAD, COR
   const origEscola = {};
   ESCOLAS.forEach(e => e.turmas.forEach(t => { origEscola[t] = e.nome; }));
   Object.keys(ESCOLA_DA_TURMA).forEach(k => delete ESCOLA_DA_TURMA[k]);
   Object.assign(ESCOLA_DA_TURMA, origEscola);
-
   const origGrad = {
     '1º ADM':'linear-gradient(160deg,#3b82f6,#2563eb)',
     '1º Cont. Ambiental':'linear-gradient(160deg,#06b6d4,#0891b2)',
@@ -1807,7 +1753,6 @@ function restaurarTurmasOriginais(){
   };
   Object.keys(GRAD_TURMA).forEach(k => delete GRAD_TURMA[k]);
   Object.assign(GRAD_TURMA, origGrad);
-
   const origCor = {
     '1º ADM':'#3b82f6','1º Cont. Ambiental':'#06b6d4','2º Sistemas':'#6366f1',
     '8º Ano A':'#0ea5e9','8º Ano B':'#38bdf8',
@@ -1815,27 +1760,16 @@ function restaurarTurmasOriginais(){
   };
   Object.keys(COR_TURMA_SOLID).forEach(k => delete COR_TURMA_SOLID[k]);
   Object.assign(COR_TURMA_SOLID, origCor);
-
-  // ATENÇÃO: os alunos continuam com os nomes novos (não revertemos).
-  // Isso pode deixar alunos "órfãos". Vou avisar e reverter se possível.
-  // Na verdade, vamos reverter também os alunos/aulas que batem com renomeações
-  const renames = S.config.turmasRenomeadas || {};
-  // Já limpamos, então precisa guardar antes
-  // (pequeno bug: limpamos antes de usar. Corrigir abaixo)
-
   aplicarConfiguracoesTurmas();
   salvarTudo(); render(); toast('Turmas restauradas');
   abrirGerenciarTurmas();
 }
 
-/* CONFIG */
 function renderConfig(main){
   pararTickContagem();
   main.appendChild(blocoConfig(ico('i-user','ico-16')+' Perfil', [
     linhaInput('Seu nome', S.config.nomeProf, v => { S.config.nomeProf = v; salvarTudo(); })
   ]));
-
-  /* ⬇️ NOVO BLOCO: TURMAS */
   const tb = blocoConfig(ico('i-users-group','ico-16')+' Turmas', []);
   const turmaBtn = document.createElement('button');
   turmaBtn.className = 'cfg-btn primario';
@@ -1847,12 +1781,10 @@ function renderConfig(main){
   info.textContent = `Total de ${TURMAS.length} turma${TURMAS.length===1?'':'s'}. Aqui você pode renomear, adicionar ou excluir turmas — os dados dos alunos e aulas são migrados automaticamente.`;
   tb.appendChild(info);
   main.appendChild(tb);
-
   main.appendChild(blocoConfig(ico('i-palette','ico-16')+' Aparência', [
     linhaSeg('Tema', 'tema', [['auto','Auto'],['claro','Claro'],['escuro','Escuro']],
       v => { S.config.tema = v; salvarTudo(); render(); })
   ]));
-
   const nb = blocoConfig(ico('i-bell','ico-16')+' Notificações', []);
   nb.appendChild(linhaToggle('Ativar notificações', S.config.notifAtiva, async v => {
     if(!v){ S.config.notifAtiva = false; salvarTudo(); toast('Notificações desativadas'); render(); return; }
@@ -1992,7 +1924,6 @@ function linhaInput(rotulo, valor, cb){
   return d;
 }
 
-/* MODAIS DE AULA */
 function abrirEdicaoAula(id, tipo){
   const arr = tipo === 'aula' ? S.aulas : S.geral;
   const a = arr.find(x => x.id === id);
@@ -2035,7 +1966,6 @@ function abrirEdicaoAula(id, tipo){
       ini:$('#f-ini').value, fim:$('#f-fim').value, materia:$('#f-mat').value.trim(),
       sala:$('#f-sala').value.trim(), prof:$('#f-prof').value.trim() };
     if(!dados.turma || !dados.ini){ toast('Preencha turma e início'); return; }
-    // Se a turma não existe, adicionar
     if(!TURMAS.includes(dados.turma)){
       S.config.turmasCustom = S.config.turmasCustom || [];
       S.config.turmasCustom.push(dados.turma);
@@ -2107,18 +2037,63 @@ function abrirNovaAula(){
   };
 }
 
+/* ═══════════════════════════════════════════════════════════
+   NOTIFICAÇÕES — versão robusta (CORRIGIDO)
+   ═══════════════════════════════════════════════════════════ */
 async function mostrarNotif(t, o){
-  if(!('serviceWorker' in navigator)) return false;
-  try{ const r = await navigator.serviceWorker.ready; await r.showNotification(t, o); return true; }
-  catch(e){ return false; }
+  // Tenta via Service Worker (necessário no Android/PWA)
+  if('serviceWorker' in navigator){
+    try{
+      const reg = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))
+      ]);
+      await reg.showNotification(t, o);
+      return true;
+    }catch(e){
+      console.warn('[Notif] SW indisponível, tentando fallback:', e.message);
+    }
+  }
+  // Fallback: notificação direta (funciona em desktop; Android pode bloquear)
+  try{
+    new Notification(t, o);
+    return true;
+  }catch(e){
+    console.warn('[Notif] Fallback também falhou:', e);
+    return false;
+  }
 }
+
 async function testarNotificacao(){
-  if(!('Notification' in window)){ toast('Não suportado'); return; }
-  if(Notification.permission !== 'granted'){ toast('Ative o toggle primeiro'); return; }
+  if(!('Notification' in window)){
+    toast('Navegador não suporta notificações');
+    return;
+  }
+  if(Notification.permission === 'denied'){
+    toast('Bloqueado. Libere nas configurações do navegador');
+    return;
+  }
+  // Pede permissão se ainda não tiver
+  if(Notification.permission !== 'granted'){
+    let perm;
+    try{ perm = await Notification.requestPermission(); }catch(e){ perm = 'erro'; }
+    if(perm !== 'granted'){
+      toast('Permissão não concedida');
+      return;
+    }
+    S.config.notifAtiva = true;
+    salvarTudo();
+  }
+  toast('Enviando notificação...');
   const ok = await mostrarNotif('Teste — Meu Horário', {
-    body:'As notificações funcionam!', icon:'icon-192.png', badge:'icon-192.png', tag:'teste' });
-  toast(ok ? 'Notificação enviada' : 'Falha ao enviar');
+    body: 'As notificações funcionam! 🎉',
+    icon: 'icon-192.png',
+    badge: 'icon-192.png',
+    tag: 'teste-' + Date.now()
+  });
+  toast(ok ? '✓ Notificação enviada' : 'Falha ao enviar notificação');
 }
+
 function verificarNotif(){
   if(!S.config.notifAtiva) return;
   if(!('Notification' in window) || Notification.permission !== 'granted') return;
@@ -2135,7 +2110,10 @@ function verificarNotif(){
     S.notifSessao.add(k);
     mostrarNotif('Aula em ' + diff + ' min', {
       body: a.turma + (a.materia?' · '+a.materia:'') + '\nÀs ' + a.ini,
-      icon:'icon-192.png', badge:'icon-192.png', tag:k });
+      icon: 'icon-192.png',
+      badge: 'icon-192.png',
+      tag: k
+    });
   });
 }
 
