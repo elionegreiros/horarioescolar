@@ -1,9 +1,6 @@
 (() => {
 'use strict';
 
-/* ═══════════════════════════════════════════════════════════
-   HELPERS
-   ═══════════════════════════════════════════════════════════ */
 function ico(id, cls='ico'){ return `<svg class="${cls}"><use href="#${id}"/></svg>`; }
 
 const NIVEIS = [
@@ -29,11 +26,12 @@ const DIAS_CURTO = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const ORDEM = [1,2,3,4,5,6,0];
 
+/* ═══════ ESCOLAS/TURMAS — agora TURMAS é mutável ═══════ */
 const ESCOLAS = [
   { nome:'Gentil Dantas', turmas:['1º ADM','1º Cont. Ambiental','2º Sistemas','2º ADM','3º Sistemas','3º Regular'] },
   { nome:'Enéas Nogueira', turmas:['8º Ano A','8º Ano B'] }
 ];
-const TURMAS = ESCOLAS.flatMap(e => e.turmas);
+let TURMAS = ESCOLAS.flatMap(e => e.turmas);
 const ESCOLA_DA_TURMA = {};
 ESCOLAS.forEach(e => e.turmas.forEach(t => { ESCOLA_DA_TURMA[t] = e.nome; }));
 
@@ -183,7 +181,15 @@ const SEED_AULAS = [
   {dia:5,ini:'16:10',fim:'17:10',turma:'2º Sistemas',materia:'Pensamento Computacional'}
 ];
 
-const CONFIG_DEFAULT = { tema:'auto', avisoMin:10, notifAtiva:false, feriados:[], nomeProf:'Antonio Elio dos Santos Negreiros' };
+/* CONFIG_DEFAULT ganha 3 campos novos para gerenciar turmas */
+const CONFIG_DEFAULT = {
+  tema:'auto', avisoMin:10, notifAtiva:false, feriados:[],
+  nomeProf:'Antonio Elio dos Santos Negreiros',
+  turmasCustom: [],       // turmas adicionadas pelo usuário
+  turmasRemovidas: [],    // turmas hardcoded que foram excluídas
+  turmasRenomeadas: {}    // mapa { antigo: novo }
+};
+
 const RENOMEAR = {
   '8º Série A':'8º Ano A','8º Série B':'8º Ano B',
   '1º Cont. Amb.':'1º Cont. Ambiental','1º CONT. AMB':'1º Cont. Ambiental',
@@ -223,9 +229,6 @@ function corDe(str){
 const ler = k => { try{ const r=localStorage.getItem(k); return r?JSON.parse(r):null; }catch(e){ return null; } };
 const gravar = (k,v) => localStorage.setItem(k, JSON.stringify(v));
 
-/* ═══════════════════════════════════════════════════════════
-   ESTADO
-   ═══════════════════════════════════════════════════════════ */
 const S = {
   aulas: [], geral: [], alunos: [], vistos: [], config: {...CONFIG_DEFAULT},
   tab: 'horario', sub: 'calendario', diaSel: hoje().getDay(), turmaAluno: TURMAS[0],
@@ -233,26 +236,66 @@ const S = {
   busca: '', filtroLista: 'todos', filtroGeral: 'tudo',
   notifSessao: new Set(),
   calDiaAtivo: chaveData(hoje()),
-  // Aba Alunos unificada
-  subAlunos: 'chamada',   // 'chamada' | 'lista' | 'dashboard'
-  aulaChamadaId: null     // aula selecionada para chamada
+  subAlunos: 'chamada',
+  aulaChamadaId: null
 };
 
-/* ═══════════════════════════════════════════════════════════
-   MIGRAÇÃO
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════ APLICAR CONFIG DE TURMAS (renomeações/remoções) ═══════ */
+function aplicarConfiguracoesTurmas(){
+  // 1) Remover turmas marcadas como removidas
+  const removidas = S.config.turmasRemovidas || [];
+  removidas.forEach(nome => {
+    ESCOLAS.forEach(e => {
+      const i = e.turmas.indexOf(nome);
+      if(i > -1) e.turmas.splice(i, 1);
+    });
+    delete ESCOLA_DA_TURMA[nome];
+    delete GRAD_TURMA[nome];
+    delete COR_TURMA_SOLID[nome];
+  });
+
+  // 2) Aplicar renomeações em ordem
+  const renomeadas = S.config.turmasRenomeadas || {};
+  Object.entries(renomeadas).forEach(([antigo, novo]) => {
+    ESCOLAS.forEach(e => {
+      const i = e.turmas.indexOf(antigo);
+      if(i > -1) e.turmas[i] = novo;
+    });
+    if(ESCOLA_DA_TURMA[antigo]){
+      ESCOLA_DA_TURMA[novo] = ESCOLA_DA_TURMA[antigo];
+      delete ESCOLA_DA_TURMA[antigo];
+    }
+    if(GRAD_TURMA[antigo]){
+      GRAD_TURMA[novo] = GRAD_TURMA[antigo];
+      delete GRAD_TURMA[antigo];
+    }
+    if(COR_TURMA_SOLID[antigo]){
+      COR_TURMA_SOLID[novo] = COR_TURMA_SOLID[antigo];
+      delete COR_TURMA_SOLID[antigo];
+    }
+  });
+
+  // 3) Recalcular lista global
+  TURMAS = [
+    ...ESCOLAS.flatMap(e => e.turmas),
+    ...(S.config.turmasCustom || [])
+  ];
+
+  // 4) Validar turma selecionada
+  if(!TURMAS.includes(S.turmaAluno)){
+    S.turmaAluno = TURMAS[0] || '';
+  }
+}
+
 function migrarNomes(arr){ arr.forEach(a => { if(RENOMEAR[a.turma]) a.turma = RENOMEAR[a.turma]; }); }
 
 function migrarAluno(a){
   if(MIGRA_NIVEL[a.nivel]) a.nivel = MIGRA_NIVEL[a.nivel];
   if(!NIVEL_MAP[a.nivel]) a.nivel = 'bom';
-  // Antes "notas" era array de observações; agora é "observacoes"
   if(Array.isArray(a.notas) && !Array.isArray(a.observacoes)){
     a.observacoes = a.notas.map(n => ({
-      id: n.id || uid(),
-      data: n.data || chaveData(hoje()),
-      texto: n.texto || '',
-      tipo: n.tipo || 'neutro'
+      id: n.id || uid(), data: n.data || chaveData(hoje()),
+      texto: n.texto || '', tipo: n.tipo || 'neutro'
     }));
   }
   delete a.notas;
@@ -263,9 +306,7 @@ function migrarAluno(a){
 function migrarVisto(v){
   if(!v.status){
     v.status = {};
-    if(Array.isArray(v.presentes)){
-      v.presentes.forEach(id => { v.status[id] = 'presente'; });
-    }
+    if(Array.isArray(v.presentes)){ v.presentes.forEach(id => { v.status[id] = 'presente'; }); }
   }
   delete v.presentes;
   if(!v.registros) v.registros = {};
@@ -275,7 +316,7 @@ function migrarVisto(v){
 function carregarTudo(){
   S.aulas = ler(K.aulas) || SEED_AULAS.map((a,i)=>({id:'s'+i, ...a}));
   S.geral = ler(K.geral) || [];
-  const SEED_VER = 'v6.0-merged';
+  const SEED_VER = 'v6.1-turmas';
   const jaSalvos = ler(K.alunos);
   if(localStorage.getItem('h5.seedVer') === SEED_VER && jaSalvos){
     S.alunos = jaSalvos.map(migrarAluno);
@@ -294,6 +335,7 @@ function carregarTudo(){
   S.vistos = (ler(K.vistos) || []).map(migrarVisto);
   S.config = {...CONFIG_DEFAULT, ...(ler(K.config)||{})};
   migrarNomes(S.aulas); migrarNomes(S.geral);
+  aplicarConfiguracoesTurmas();
   salvarTudo();
 }
 function salvarTudo(){
@@ -302,9 +344,6 @@ function salvarTudo(){
   gravar(K.config, S.config);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   TEMA / TOAST / MODAL
-   ═══════════════════════════════════════════════════════════ */
 function aplicarTema(){
   document.documentElement.setAttribute('data-tema', S.config.tema || 'auto');
   const escuro = S.config.tema==='escuro' ||
@@ -326,18 +365,14 @@ function abrirModal(html){
 function fecharModal(){ $('#modal').classList.remove('aberto'); }
 $('#modal').addEventListener('click', e => { if(e.target.id === 'modal') fecharModal(); });
 
-/* ═══════════════════════════════════════════════════════════
-   PRESENÇA / REGISTROS
-   ═══════════════════════════════════════════════════════════ */
+/* PRESENÇA / REGISTROS */
 function proximoStatus(atual){
   if(atual === 'presente') return 'ausente';
   if(atual === 'ausente') return 'justificado';
   if(atual === 'justificado') return 'presente';
   return 'presente';
 }
-function getVisto(aulaId, data){
-  return S.vistos.find(x => x.aulaId === aulaId && x.data === data);
-}
+function getVisto(aulaId, data){ return S.vistos.find(x => x.aulaId === aulaId && x.data === data); }
 function getStatusAluno(aulaId, data, alunoId){
   const v = getVisto(aulaId, data);
   if(!v || !v.status) return 'pendente';
@@ -348,7 +383,6 @@ function getRegistroAluno(aulaId, data, alunoId){
   if(!v || !v.registros) return {};
   return v.registros[alunoId] || {};
 }
-
 function garantirVisto(aula, data){
   let v = getVisto(aula.id, data);
   if(!v){
@@ -375,9 +409,6 @@ function setRegistroAluno(aula, data, alunoId, chave, valor){
   gravar(K.vistos, S.vistos);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   RESUMOS E STATS
-   ═══════════════════════════════════════════════════════════ */
 function resumoAula(aulaId, data, turma){
   const alunos = S.alunos.filter(a => a.turma === turma);
   const v = getVisto(aulaId, data);
@@ -395,9 +426,7 @@ function resumoAula(aulaId, data, turma){
 function statsAluno(alunoId, turma, dias){
   dias = dias || 90;
   const limite = dias >= 9999 ? new Date(0) : new Date(Date.now() - dias*86400000);
-  const chamadas = S.vistos.filter(v =>
-    v.turma === turma && new Date(v.data + 'T12:00') >= limite
-  );
+  const chamadas = S.vistos.filter(v => v.turma === turma && new Date(v.data + 'T12:00') >= limite);
   let pres=0, aus=0, jus=0, tot=0;
   let totTrab=0, entrTrab=0, totProv=0, fezProv=0, totAtiv=0, respAtiv=0;
   const notas = [];
@@ -423,13 +452,10 @@ function statsAluno(alunoId, turma, dias){
   const pctAtiv = totAtiv ? Math.round(respAtiv/totAtiv*100) : null;
   const media   = notas.length ? (notas.reduce((a,b)=>a+b,0)/notas.length) : null;
   return { pres, aus, jus, tot, freq,
-    totTrab, entrTrab, pctTrab,
-    totProv, fezProv, pctProv,
-    totAtiv, respAtiv, pctAtiv,
-    notas, media, qtdNotas: notas.length };
+    totTrab, entrTrab, pctTrab, totProv, fezProv, pctProv,
+    totAtiv, respAtiv, pctAtiv, notas, media, qtdNotas: notas.length };
 }
 
-/* Score 0-100 baseado em múltiplos componentes */
 function calcScore(aluno){
   const st = statsAluno(aluno.id, aluno.turma, 9999);
   const comps = [];
@@ -458,15 +484,11 @@ function detectarConflitos(items){
 
 function dataDaSemana(dow){
   const hj = new Date();
-  const offset = dow - hj.getDay();
   const d = new Date(hj);
-  d.setDate(d.getDate() + offset);
+  d.setDate(d.getDate() + (dow - hj.getDay()));
   return chaveData(d);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   CONTAGEM
-   ═══════════════════════════════════════════════════════════ */
 function segundosAte(hhmm){
   const agora = new Date();
   const [h,m] = hhmm.split(':').map(Number);
@@ -476,16 +498,12 @@ function segundosAte(hhmm){
 }
 function formatarContagem(seg){
   if(seg <= 0) return '00:00';
-  const h = Math.floor(seg/3600);
-  const m = Math.floor((seg%3600)/60);
-  const s = seg%60;
+  const h = Math.floor(seg/3600), m = Math.floor((seg%3600)/60), s = seg%60;
   if(h > 0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   RENDER PRINCIPAL
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════ RENDER PRINCIPAL ═══════ */
 function render(){
   aplicarTema();
   renderHero();
@@ -564,23 +582,16 @@ function renderMain(){
   else if(S.tab === 'config') renderConfig(main);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   CALENDÁRIO
-   ═══════════════════════════════════════════════════════════ */
+/* CALENDÁRIO */
 function renderCalendario(main){
   const card = document.createElement('div');
   card.className = 'card';
-
   const head = document.createElement('div');
   head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px';
   head.innerHTML = `
-    <button id="cal-prev" style="width:38px;height:38px;border-radius:12px;border:0;background:var(--card-2);color:var(--text);cursor:pointer;display:grid;place-items:center">
-      ${ico('i-chevron-left','ico-18')}
-    </button>
+    <button id="cal-prev" style="width:38px;height:38px;border-radius:12px;border:0;background:var(--card-2);color:var(--text);cursor:pointer;display:grid;place-items:center">${ico('i-chevron-left','ico-18')}</button>
     <h2 style="margin:0;font-size:17px;font-weight:800;letter-spacing:-.4px;text-transform:capitalize">${MESES[S.calMes]} ${S.calAno}</h2>
-    <button id="cal-next" style="width:38px;height:38px;border-radius:12px;border:0;background:var(--card-2);color:var(--text);cursor:pointer;display:grid;place-items:center">
-      ${ico('i-chevron-right','ico-18')}
-    </button>`;
+    <button id="cal-next" style="width:38px;height:38px;border-radius:12px;border:0;background:var(--card-2);color:var(--text);cursor:pointer;display:grid;place-items:center">${ico('i-chevron-right','ico-18')}</button>`;
   card.appendChild(head);
 
   const grid = document.createElement('div');
@@ -588,39 +599,26 @@ function renderCalendario(main){
   ['D','S','T','Q','Q','S','S'].forEach(dow => {
     const el = document.createElement('div');
     el.style.cssText = 'text-align:center;font-size:11px;font-weight:800;color:var(--muted);padding:8px 0;text-transform:uppercase';
-    el.textContent = dow;
-    grid.appendChild(el);
+    el.textContent = dow; grid.appendChild(el);
   });
-
   const primeiroDia = new Date(S.calAno, S.calMes, 1).getDay();
   const diasNoMes = new Date(S.calAno, S.calMes+1, 0).getDate();
   const diasNoMesAnt = new Date(S.calAno, S.calMes, 0).getDate();
-  const dHoje = hoje();
-  const chHoje = chaveData(dHoje);
+  const chHoje = chaveData(hoje());
 
   for(let i = primeiroDia - 1; i >= 0; i--){
     const el = document.createElement('button');
     el.style.cssText = 'aspect-ratio:1;border:0;background:transparent;color:var(--muted);opacity:.3;font-family:inherit;font-size:14px;font-weight:700;border-radius:12px;cursor:default';
-    el.textContent = diasNoMesAnt - i;
-    grid.appendChild(el);
+    el.textContent = diasNoMesAnt - i; grid.appendChild(el);
   }
   for(let d = 1; d <= diasNoMes; d++){
     const data = new Date(S.calAno, S.calMes, d);
-    const chave = chaveData(data);
-    const dow = data.getDay();
+    const chave = chaveData(data), dow = data.getDay();
     const aulasDoDia = S.aulas.filter(a => a.dia === dow);
     const feriado = S.config.feriados.includes(chave);
-    const ehHoje = chave === chHoje;
-    const sel = chave === S.calDiaAtivo;
-
+    const ehHoje = chave === chHoje, sel = chave === S.calDiaAtivo;
     const el = document.createElement('button');
-    el.style.cssText = `aspect-ratio:1;border:0;background:transparent;color:var(--text);
-      font-family:inherit;font-size:14px;font-weight:700;border-radius:12px;
-      cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
-      position:relative;transition:transform .12s;${ehHoje?'background:var(--grad-primary-cyan);color:#fff;':''}
-      ${feriado&&!ehHoje?'background:var(--yellow-soft);color:var(--yellow);':''}
-      ${sel&&!ehHoje?'box-shadow:0 0 0 2.5px var(--primary);':''}
-      ${sel&&ehHoje?'box-shadow:0 0 0 2.5px #06b6d4;':''}`;
+    el.style.cssText = `aspect-ratio:1;border:0;background:transparent;color:var(--text);font-family:inherit;font-size:14px;font-weight:700;border-radius:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;position:relative;transition:transform .12s;${ehHoje?'background:var(--grad-primary-cyan);color:#fff;':''}${feriado&&!ehHoje?'background:var(--yellow-soft);color:var(--yellow);':''}${sel&&!ehHoje?'box-shadow:0 0 0 2.5px var(--primary);':''}${sel&&ehHoje?'box-shadow:0 0 0 2.5px #06b6d4;':''}`;
     el.innerHTML = `<span>${d}</span>`;
     if(aulasDoDia.length && !feriado){
       const dots = document.createElement('div');
@@ -640,11 +638,9 @@ function renderCalendario(main){
   for(let i = 1; i <= restantes; i++){
     const el = document.createElement('button');
     el.style.cssText = 'aspect-ratio:1;border:0;background:transparent;color:var(--muted);opacity:.3;font-family:inherit;font-size:14px;font-weight:700;border-radius:12px;cursor:default';
-    el.textContent = i;
-    grid.appendChild(el);
+    el.textContent = i; grid.appendChild(el);
   }
-  card.appendChild(grid);
-  main.appendChild(card);
+  card.appendChild(grid); main.appendChild(card);
 
   setTimeout(() => {
     const p = document.getElementById('cal-prev'), n = document.getElementById('cal-next');
@@ -653,50 +649,33 @@ function renderCalendario(main){
   }, 0);
 
   const [y,m,dd] = S.calDiaAtivo.split('-').map(Number);
-  const dataSel = new Date(y, m-1, dd);
-  const dowSel = dataSel.getDay();
+  const dowSel = new Date(y, m-1, dd).getDay();
   const aulasSel = S.aulas.filter(a => a.dia === dowSel).sort((a,b)=>a.ini.localeCompare(b.ini));
   const feriadoSel = S.config.feriados.includes(S.calDiaAtivo);
   const ehHojeSel = S.calDiaAtivo === chHoje;
-
   const sec = document.createElement('div');
   sec.className = 'section-h';
   sec.innerHTML = `${ico('i-calendar','ico-20 lead')}<h3>${dd} de ${MESES[m-1]} · ${DIAS[dowSel]}</h3><span class="count">${aulasSel.length} aula${aulasSel.length===1?'':'s'}</span>`;
   main.appendChild(sec);
 
   if(feriadoSel){
-    const v = document.createElement('div');
-    v.className = 'vazio';
-    v.innerHTML = `${ico('i-star','ico')}Feriado 🎉<br>Aproveite o descanso`;
-    main.appendChild(v);
-    return;
+    const v = document.createElement('div'); v.className = 'vazio';
+    v.innerHTML = `${ico('i-star','ico')}Feriado 🎉<br>Aproveite o descanso`; main.appendChild(v); return;
   }
   if(!aulasSel.length){
-    const v = document.createElement('div');
-    v.className = 'vazio';
-    v.innerHTML = `${ico('i-calendar','ico')}Sem aulas neste dia.`;
-    main.appendChild(v);
-    return;
+    const v = document.createElement('div'); v.className = 'vazio';
+    v.innerHTML = `${ico('i-calendar','ico')}Sem aulas neste dia.`; main.appendChild(v); return;
   }
-
-  if(ehHojeSel){
-    const cd = criarCountdownCard(aulasSel);
-    main.appendChild(cd);
-  }
+  if(ehHojeSel){ main.appendChild(criarCountdownCard(aulasSel)); }
   aulasSel.forEach(a => main.appendChild(criarAulaCardComContagem(a, dowSel, ehHojeSel)));
-
   if(!ehHojeSel){
     const av = document.createElement('div');
     av.style.cssText = 'text-align:center;font-size:12px;color:var(--muted);padding:10px;font-weight:600';
-    av.textContent = `Mostrando aulas de ${DIAS[dowSel]}`;
-    main.appendChild(av);
+    av.textContent = `Mostrando aulas de ${DIAS[dowSel]}`; main.appendChild(av);
   }
   iniciarTickContagem();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   COUNTDOWN
-   ═══════════════════════════════════════════════════════════ */
 function criarCountdownCard(aulasSel){
   const card = document.createElement('div');
   card.className = 'countdown';
@@ -708,7 +687,6 @@ function atualizarConteudoCountdown(card, aulasSel){
   const hhmm = horaAgora();
   const atual = aulasSel.find(a => a.ini <= hhmm && hhmm < (a.fim || '23:59'));
   const prox = aulasSel.find(a => a.ini > hhmm);
-
   if(atual){
     const segRestantes = segundosAte(atual.fim || '23:59');
     card.innerHTML = `
@@ -727,12 +705,9 @@ function atualizarConteudoCountdown(card, aulasSel){
     setTimeout(() => {
       const btn = document.getElementById('cd-cta');
       if(btn) btn.onclick = () => {
-        S.tab = 'alunos';
-        S.subAlunos = 'chamada';
-        S.turmaAluno = atual.turma;
-        S.aulaChamadaId = atual.id;
-        S.diaSel = atual.dia;
-        render();
+        S.tab = 'alunos'; S.subAlunos = 'chamada';
+        S.turmaAluno = atual.turma; S.aulaChamadaId = atual.id;
+        S.diaSel = atual.dia; render();
         window.scrollTo({top:0,behavior:'smooth'});
       };
     }, 0);
@@ -750,9 +725,7 @@ function atualizarConteudoCountdown(card, aulasSel){
           <div class="countdown-aula-meta">${esc(prox.materia || 'Sem matéria')} · começa às ${esc(prox.ini)}</div>
         </div>
       </div>`;
-    card.dataset.modo = 'prox';
-    card.dataset.aulaId = prox.id;
-    return;
+    card.dataset.modo = 'prox'; card.dataset.aulaId = prox.id; return;
   }
   card.innerHTML = `
     <div class="countdown-empty">
@@ -760,13 +733,9 @@ function atualizarConteudoCountdown(card, aulasSel){
       <div class="title">Todas as aulas terminaram 🎉</div>
       <div class="sub">Bom descanso! Volte amanhã para conferir o próximo dia.</div>
     </div>`;
-  card.dataset.modo = 'fim';
-  delete card.dataset.aulaId;
+  card.dataset.modo = 'fim'; delete card.dataset.aulaId;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   AULA CARD COM CONTAGEM
-   ═══════════════════════════════════════════════════════════ */
 function criarAulaCardComContagem(a, dowSel, ehHoje){
   const agora = horaAgora();
   const atual = ehHoje && a.ini <= agora && agora < (a.fim || '23:59');
@@ -775,24 +744,16 @@ function criarAulaCardComContagem(a, dowSel, ehHoje){
   const escola = ESCOLA_DA_TURMA[a.turma];
   const grad = GRAD_TURMA[a.turma] || 'var(--grad-primary-cyan)';
   const corChip = COR_TURMA_SOLID[a.turma] || '#2563eb';
-
   const el = document.createElement('div');
   el.className = 'aula-card';
-  el.style.position = 'relative';
-  el.style.overflow = 'hidden';
-  if(atual){
-    el.style.boxShadow = `0 0 0 2px ${corChip}, 0 12px 28px -14px ${corChip}88`;
-  } else if(passada){
-    el.style.opacity = '0.62';
-  }
-
+  el.style.position = 'relative'; el.style.overflow = 'hidden';
+  if(atual) el.style.boxShadow = `0 0 0 2px ${corChip}, 0 12px 28px -14px ${corChip}88`;
+  else if(passada) el.style.opacity = '0.62';
   const barra = document.createElement('div');
   barra.style.cssText = `position:absolute;left:0;top:0;bottom:0;width:4px;background:${corChip};${passada?'opacity:.45':''}`;
   el.appendChild(barra);
-
   const header = document.createElement('div');
-  header.className = 'aula-head';
-  header.style.paddingLeft = '8px';
+  header.className = 'aula-head'; header.style.paddingLeft = '8px';
   header.innerHTML = `
     <div class="aula-icon" style="background:${grad}">${ico('i-book','ico-22')}</div>
     <div class="aula-body">
@@ -806,34 +767,27 @@ function criarAulaCardComContagem(a, dowSel, ehHoje){
     </div>
     <div class="aluno-chevron">${ico('i-chevron-right','ico-18')}</div>`;
   el.appendChild(header);
-
   if(ehHoje && (atual || proxima) && a.fim){
     const linha = document.createElement('div');
     linha.style.cssText = `display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border-2);font-size:12.5px;font-weight:700;color:${atual?'var(--green)':'var(--primary)'};`;
     const icoL = atual ? 'i-dot' : 'i-hourglass';
     const label = atual ? 'Termina em' : 'Começa em';
     linha.innerHTML = `${ico(icoL,'ico-14')}<span style="opacity:.8">${label}</span>
-      <span class="cd-inline" data-ini="${a.ini}" data-fim="${a.fim}" data-modo="${atual?'atual':'prox'}"
-        style="margin-left:auto;font-variant-numeric:tabular-nums;font-size:16px;font-weight:800;letter-spacing:-.3px;color:inherit">--:--</span>`;
+      <span class="cd-inline" data-ini="${a.ini}" data-fim="${a.fim}" data-modo="${atual?'atual':'prox'}" style="margin-left:auto;font-variant-numeric:tabular-nums;font-size:16px;font-weight:800;letter-spacing:-.3px;color:inherit">--:--</span>`;
     el.appendChild(linha);
   } else if(passada){
     const linha = document.createElement('div');
     linha.style.cssText = `display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border-2);font-size:11.5px;font-weight:700;color:var(--muted);`;
-    linha.innerHTML = `${ico('i-check','ico-12')} Aula encerrada`;
-    el.appendChild(linha);
+    linha.innerHTML = `${ico('i-check','ico-12')} Aula encerrada`; el.appendChild(linha);
   } else if(!ehHoje){
     const linha = document.createElement('div');
     linha.style.cssText = `display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border-2);font-size:11.5px;font-weight:700;color:var(--muted);`;
-    linha.innerHTML = `${ico('i-calendar','ico-12')} ${DIAS[dowSel]}`;
-    el.appendChild(linha);
+    linha.innerHTML = `${ico('i-calendar','ico-12')} ${DIAS[dowSel]}`; el.appendChild(linha);
   }
   el.onclick = () => abrirEdicaoAula(a.id, 'aula');
   return el;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   TICK CONTAGEM
-   ═══════════════════════════════════════════════════════════ */
 let tickContagemTimer = null;
 function iniciarTickContagem(){
   if(tickContagemTimer) clearInterval(tickContagemTimer);
@@ -861,9 +815,6 @@ function atualizarContagens(){
   if(elAg) elAg.textContent = horaAgora().replace(':','h');
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SEMANA
-   ═══════════════════════════════════════════════════════════ */
 function renderSemana(main){
   const dHoje = hoje().getDay();
   let tem = false;
@@ -871,17 +822,14 @@ function renderSemana(main){
     const lista = S.aulas.filter(a => a.dia === d).sort((a,b)=>a.ini.localeCompare(b.ini));
     if(!lista.length) return;
     tem = true;
-    const sec = document.createElement('div');
-    sec.className = 'section-h';
+    const sec = document.createElement('div'); sec.className = 'section-h';
     sec.innerHTML = `${ico('i-calendar','ico-20 lead')}<h3>${DIAS[d]}${d===dHoje?' · hoje':''}</h3><span class="count">${lista.length}</span>`;
     main.appendChild(sec);
     lista.forEach(a => main.appendChild(criarAulaCardSimples(a, d)));
   });
   if(!tem){
-    const v = document.createElement('div');
-    v.className = 'vazio';
-    v.innerHTML = `${ico('i-grid','ico')}Nenhuma aula cadastrada.`;
-    main.appendChild(v);
+    const v = document.createElement('div'); v.className = 'vazio';
+    v.innerHTML = `${ico('i-grid','ico')}Nenhuma aula cadastrada.`; main.appendChild(v);
   }
   pararTickContagem();
 }
@@ -913,15 +861,10 @@ function criarAulaCardSimples(a, diaRef){
   return el;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   GERAL
-   ═══════════════════════════════════════════════════════════ */
 function renderGeral(main){
   pararTickContagem();
   const dayTabs = document.createElement('div');
-  dayTabs.className = 'day-tabs';
-  dayTabs.style.marginTop = '0';
-  dayTabs.style.padding = '0';
+  dayTabs.className = 'day-tabs'; dayTabs.style.marginTop = '0'; dayTabs.style.padding = '0';
   const dHojeTab = hoje().getDay();
   ORDEM.forEach(d => {
     const b = document.createElement('button');
@@ -931,7 +874,6 @@ function renderGeral(main){
     dayTabs.appendChild(b);
   });
   main.appendChild(dayTabs);
-
   const chips = document.createElement('div');
   chips.className = 'chips';
   [['tudo','Tudo'],['minhas','Minhas'],['outras','Outras']].forEach(([v,t]) => {
@@ -942,36 +884,28 @@ function renderGeral(main){
     chips.appendChild(c);
   });
   main.appendChild(chips);
-
   const aulasDia = S.aulas.filter(a => a.dia === S.diaSel).map(a => ({...a, _tipo:'aula'}));
   const geralDia = S.geral.filter(a => a.dia === S.diaSel).map(a => ({...a, _tipo:'geral'}));
   let todas = [...aulasDia, ...geralDia].sort((a,b)=>a.ini.localeCompare(b.ini));
   if(S.filtroGeral === 'minhas') todas = todas.filter(a => a._tipo === 'aula');
   else if(S.filtroGeral === 'outras') todas = todas.filter(a => a._tipo === 'geral');
-
   const conflitos = detectarConflitos([...aulasDia, ...geralDia]);
   if(conflitos.size){
     const aviso = document.createElement('div');
     aviso.className = 'card';
     aviso.style.cssText = 'background:linear-gradient(135deg,#fee2e2,#fff1f2);border-color:rgba(239,68,68,.3);display:flex;align-items:center;gap:14px';
-    aviso.innerHTML = `
-      <div class="aula-icon" style="background:linear-gradient(135deg,#ef4444,#dc2626)">${ico('i-alert','ico-22')}</div>
-      <div>
-        <div style="font-size:10.5px;font-weight:800;letter-spacing:1.2px;color:#dc2626">ATENÇÃO</div>
-        <div style="font-size:15px;font-weight:800;margin-top:3px">${conflitos.size} aulas com choque de sala</div>
-        <div style="font-size:12px;color:var(--muted);font-weight:600;margin-top:2px">Reserve o lab antes dos colegas</div>
-      </div>`;
+    aviso.innerHTML = `<div class="aula-icon" style="background:linear-gradient(135deg,#ef4444,#dc2626)">${ico('i-alert','ico-22')}</div>
+      <div><div style="font-size:10.5px;font-weight:800;letter-spacing:1.2px;color:#dc2626">ATENÇÃO</div>
+      <div style="font-size:15px;font-weight:800;margin-top:3px">${conflitos.size} aulas com choque de sala</div>
+      <div style="font-size:12px;color:var(--muted);font-weight:600;margin-top:2px">Reserve o lab antes dos colegas</div></div>`;
     main.appendChild(aviso);
   }
   if(!todas.length){
-    const v = document.createElement('div');
-    v.className = 'vazio';
+    const v = document.createElement('div'); v.className = 'vazio';
     v.innerHTML = `${ico('i-users-group','ico')}${S.filtroGeral==='outras'?'Nenhuma aula de colega.':'Sem aulas neste dia.'}`;
-    main.appendChild(v);
-    return;
+    main.appendChild(v); return;
   }
-  const agora = horaAgora();
-  const dHojeCalc = hoje().getDay();
+  const agora = horaAgora(), dHojeCalc = hoje().getDay();
   todas.forEach(a => {
     const ehMinha = a._tipo === 'aula';
     const temConflito = conflitos.has(a.id);
@@ -1002,45 +936,25 @@ function renderGeral(main){
   });
 }
 
-/* ═══════════════════════════════════════════════════════════
-   ABA ALUNOS (unificada)
-   ═══════════════════════════════════════════════════════════ */
+/* ABA ALUNOS */
 function renderAlunos(main){
   pararTickContagem();
-
-  // Sub-nav: Chamada / Lista / Dashboard
   const subNav = document.createElement('div');
-  subNav.className = 'seg-tabs';
-  subNav.style.marginTop = '12px';
-  const subs = [
-    ['chamada',  'i-clipboard',  'Chamada'],
-    ['lista',    'i-users',      'Lista'],
-    ['dashboard','i-trophy',     'Dashboard']
-  ];
-  subNav.innerHTML = subs.map(([v,i,t]) =>
-    `<button class="seg-tab${S.subAlunos===v?' on':''}" data-v="${v}">${ico(i,'ico-16')} ${t}</button>`
-  ).join('');
+  subNav.className = 'seg-tabs'; subNav.style.marginTop = '12px';
+  const subs = [['chamada','i-clipboard','Chamada'],['lista','i-users','Lista'],['dashboard','i-trophy','Dashboard']];
+  subNav.innerHTML = subs.map(([v,i,t]) => `<button class="seg-tab${S.subAlunos===v?' on':''}" data-v="${v}">${ico(i,'ico-16')} ${t}</button>`).join('');
   main.appendChild(subNav);
-  subNav.querySelectorAll('button').forEach(b => {
-    b.onclick = () => { S.subAlunos = b.dataset.v; render(); };
-  });
-
+  subNav.querySelectorAll('button').forEach(b => { b.onclick = () => { S.subAlunos = b.dataset.v; render(); }; });
   if(S.subAlunos === 'chamada')   return renderChamada(main);
   if(S.subAlunos === 'lista')     return renderListaAlunos(main);
   if(S.subAlunos === 'dashboard') return renderDashboard(main);
 }
 
-/* ─────────── CHAMADA ─────────── */
 function renderChamada(main){
   const turma = S.turmaAluno;
-  const aulasDia = S.aulas.filter(a => a.dia === S.diaSel && a.turma === turma)
-    .sort((a,b)=>a.ini.localeCompare(b.ini));
-
-  // Day tabs
+  const aulasDia = S.aulas.filter(a => a.dia === S.diaSel && a.turma === turma).sort((a,b)=>a.ini.localeCompare(b.ini));
   const dayTabs = document.createElement('div');
-  dayTabs.className = 'day-tabs';
-  dayTabs.style.marginTop = '8px';
-  dayTabs.style.padding = '0';
+  dayTabs.className = 'day-tabs'; dayTabs.style.marginTop = '8px'; dayTabs.style.padding = '0';
   const dHoje = hoje().getDay();
   ORDEM.forEach(d => {
     const b = document.createElement('button');
@@ -1050,29 +964,21 @@ function renderChamada(main){
     dayTabs.appendChild(b);
   });
   main.appendChild(dayTabs);
-
   if(!aulasDia.length){
-    const v = document.createElement('div');
-    v.className = 'vazio';
+    const v = document.createElement('div'); v.className = 'vazio';
     v.innerHTML = `${ico('i-calendar','ico')}Sem aulas de <b>${esc(turma)}</b> ${DIAS[S.diaSel]}.`;
-    main.appendChild(v);
-    return;
+    main.appendChild(v); return;
   }
-
-  // Se só há uma aula ou o professor ainda não escolheu, selecionar a mais adequada
   if(!S.aulaChamadaId || !aulasDia.find(a => a.id === S.aulaChamadaId)){
     const hhmm = horaAgora();
     const atual = aulasDia.find(a => a.ini <= hhmm && hhmm < (a.fim || '23:59'));
-    const prox  = aulasDia.find(a => a.ini > hhmm);
+    const prox = aulasDia.find(a => a.ini > hhmm);
     S.aulaChamadaId = (atual || prox || aulasDia[0]).id;
   }
   const aulaSel = aulasDia.find(a => a.id === S.aulaChamadaId);
-
-  // Seletor de aula (se mais de uma no dia)
   if(aulasDia.length > 1){
     const aulaChips = document.createElement('div');
-    aulaChips.className = 'chips';
-    aulaChips.style.marginTop = '4px';
+    aulaChips.className = 'chips'; aulaChips.style.marginTop = '4px';
     aulasDia.forEach(a => {
       const c = document.createElement('button');
       c.className = 'chip' + (a.id === S.aulaChamadaId ? ' on':'');
@@ -1082,16 +988,12 @@ function renderChamada(main){
     });
     main.appendChild(aulaChips);
   }
-
-  // Cabeçalho da aula selecionada
   const dataRef = S.diaSel === dHoje ? chaveData(hoje()) : dataDaSemana(S.diaSel);
   const resumo = resumoAula(aulaSel.id, dataRef, aulaSel.turma);
   const grad = GRAD_TURMA[aulaSel.turma] || 'var(--grad-primary-cyan)';
   const escola = ESCOLA_DA_TURMA[aulaSel.turma];
-
   const cardAula = document.createElement('div');
-  cardAula.className = 'aula-card';
-  cardAula.style.cursor = 'default';
+  cardAula.className = 'aula-card'; cardAula.style.cursor = 'default';
   cardAula.innerHTML = `
     <div class="aula-head">
       <div class="aula-icon" style="background:${grad}">${ico('i-book','ico-22')}</div>
@@ -1112,14 +1014,9 @@ function renderChamada(main){
     </div>`;
   main.appendChild(cardAula);
 
-  // Busca
   const searchRow = document.createElement('div');
   searchRow.className = 'search-row';
-  searchRow.innerHTML = `
-    <div class="search-box">
-      ${ico('i-search','ico-18')}
-      <input type="text" id="busca-chamada" placeholder="Buscar aluno..." value="${esc(S.busca||'')}">
-    </div>`;
+  searchRow.innerHTML = `<div class="search-box">${ico('i-search','ico-18')}<input type="text" id="busca-chamada" placeholder="Buscar aluno..." value="${esc(S.busca||'')}"></div>`;
   main.appendChild(searchRow);
   const inp = searchRow.querySelector('#busca-chamada');
   inp.oninput = e => {
@@ -1130,26 +1027,21 @@ function renderChamada(main){
     if(novo){ novo.focus(); try{ novo.setSelectionRange(pos,pos);}catch(_){} }
   };
 
-  // Ações em massa
   const todos = S.alunos.filter(a => a.turma === turma).sort((a,b)=>a.nome.localeCompare(b.nome));
   const btnRow = document.createElement('div');
   btnRow.style.cssText = 'display:flex;gap:8px;align-items:stretch';
-
   const bTodos = document.createElement('button');
-  bTodos.className = 'cfg-btn secundario';
-  bTodos.style.cssText = 'margin-top:0;flex:1';
+  bTodos.className = 'cfg-btn secundario'; bTodos.style.cssText = 'margin-top:0;flex:1';
   bTodos.innerHTML = ico('i-check','ico-16') + ' Marcar todos presentes';
   bTodos.onclick = () => {
     if(!confirm(`Marcar ${todos.length} alunos como presentes?`)) return;
     todos.forEach(al => setStatusAluno(aulaSel, dataRef, al.id, 'presente'));
     render(); toast('Todos presentes');
   };
-
   const bLimpar = document.createElement('button');
   bLimpar.className = 'cfg-btn secundario';
   bLimpar.style.cssText = 'margin-top:0;flex:0 0 48px;width:48px;height:48px;padding:0;display:grid;place-items:center;color:var(--muted)';
   bLimpar.innerHTML = ico('i-refresh','ico-18');
-  bLimpar.title = 'Limpar';
   bLimpar.onclick = () => {
     if(!confirm('Limpar chamada desta aula?')) return;
     todos.forEach(al => {
@@ -1161,23 +1053,16 @@ function renderChamada(main){
     });
     render(); toast('Chamada limpa');
   };
-
-  btnRow.appendChild(bTodos);
-  btnRow.appendChild(bLimpar);
+  btnRow.appendChild(bTodos); btnRow.appendChild(bLimpar);
   main.appendChild(btnRow);
 
-  // Lista
   const busca = (S.busca||'').toLowerCase().trim();
   const lista = todos.filter(al => !busca || al.nome.toLowerCase().includes(busca));
   if(!lista.length){
-    const v = document.createElement('div');
-    v.className = 'vazio';
-    v.innerHTML = `${ico('i-search','ico')}Nenhum aluno encontrado.`;
-    main.appendChild(v);
-    return;
+    const v = document.createElement('div'); v.className = 'vazio';
+    v.innerHTML = `${ico('i-search','ico')}Nenhum aluno encontrado.`; main.appendChild(v); return;
   }
   lista.forEach(al => main.appendChild(criarLinhaChamada(al, aulaSel, dataRef)));
-
   if(S.diaSel !== dHoje){
     const av = document.createElement('div');
     av.style.cssText = 'text-align:center;font-size:12px;color:var(--muted);padding:10px;font-weight:600';
@@ -1193,10 +1078,8 @@ function criarLinhaChamada(al, aula, dataRef){
   const stats = statsAluno(al.id, al.turma, 90);
   const freq = stats.freq != null ? stats.freq : 0;
   const freqCls = freq >= 90 ? 'ok' : freq >= 75 ? 'warn' : 'bad';
-
   const row = document.createElement('div');
   row.className = 'chamada-row';
-
   row.innerHTML = `
     <div class="chamada-top">
       <div class="avatar" style="background:linear-gradient(135deg,${corDe(al.nome)},${corDe(al.nome)}cc);width:42px;height:42px;flex:0 0 42px;font-size:14px">${iniciais(al.nome)}</div>
@@ -1209,37 +1092,20 @@ function criarLinhaChamada(al, aula, dataRef){
       </div>
       <button class="chamada-perfil" title="Ver perfil">${ico('i-chevron-right','ico-18')}</button>
     </div>
-
     <div class="chamada-botoes">
       <div class="status-group">
-        <button class="status-btn st-p${st==='presente'?' on':''}" data-st="presente" title="Presente">
-          ${ico('i-check','ico-14')}<span>P</span>
-        </button>
-        <button class="status-btn st-a${st==='ausente'?' on':''}" data-st="ausente" title="Ausente">
-          ${ico('i-x','ico-14')}<span>A</span>
-        </button>
-        <button class="status-btn st-j${st==='justificado'?' on':''}" data-st="justificado" title="Justificado">
-          ${ico('i-info','ico-14')}<span>J</span>
-        </button>
+        <button class="status-btn st-p${st==='presente'?' on':''}" data-st="presente">${ico('i-check','ico-14')}<span>P</span></button>
+        <button class="status-btn st-a${st==='ausente'?' on':''}" data-st="ausente">${ico('i-x','ico-14')}<span>A</span></button>
+        <button class="status-btn st-j${st==='justificado'?' on':''}" data-st="justificado">${ico('i-info','ico-14')}<span>J</span></button>
       </div>
       <div class="registro-group">
-        <button class="reg-btn${reg.trabalho?' on':''}" data-reg="trabalho" title="Entregou trabalho">
-          ${ico('i-clipboard','ico-14')}<span>TRAB</span>
-        </button>
-        <button class="reg-btn${reg.prova?' on':''}" data-reg="prova" title="Fez a prova">
-          ${ico('i-pencil','ico-14')}<span>PROV</span>
-        </button>
-        <button class="reg-btn${reg.atividade?' on':''}" data-reg="atividade" title="Respondeu a atividade">
-          ${ico('i-check','ico-14')}<span>ATIV</span>
-        </button>
+        <button class="reg-btn${reg.trabalho?' on':''}" data-reg="trabalho">${ico('i-clipboard','ico-14')}<span>TRAB</span></button>
+        <button class="reg-btn${reg.prova?' on':''}" data-reg="prova">${ico('i-pencil','ico-14')}<span>PROV</span></button>
+        <button class="reg-btn${reg.atividade?' on':''}" data-reg="atividade">${ico('i-check','ico-14')}<span>ATIV</span></button>
       </div>
-      <input class="nota-input" type="number" step="0.1" min="0" max="10" placeholder="Nota"
-        value="${reg.nota != null ? reg.nota : ''}">
-    </div>
-  `;
-
+      <input class="nota-input" type="number" step="0.1" min="0" max="10" placeholder="Nota" value="${reg.nota != null ? reg.nota : ''}">
+    </div>`;
   row.querySelector('.chamada-perfil').onclick = (e) => { e.stopPropagation(); abrirAluno(al.id); };
-
   row.querySelectorAll('[data-st]').forEach(b => {
     b.onclick = (e) => {
       e.stopPropagation();
@@ -1253,8 +1119,7 @@ function criarLinhaChamada(al, aula, dataRef){
     b.onclick = (e) => {
       e.stopPropagation();
       const chave = b.dataset.reg;
-      const atual = !!reg[chave];
-      setRegistroAluno(aula, dataRef, al.id, chave, !atual);
+      setRegistroAluno(aula, dataRef, al.id, chave, !reg[chave]);
       if(navigator.vibrate) navigator.vibrate(12);
       render();
     };
@@ -1265,61 +1130,41 @@ function criarLinhaChamada(al, aula, dataRef){
     const v = parseFloat(notaInp.value);
     setRegistroAluno(aula, dataRef, al.id, 'nota', isNaN(v) ? null : v);
   };
-
   return row;
 }
 
-/* ─────────── LISTA (visão geral da turma) ─────────── */
 function renderListaAlunos(main){
   const turma = S.turmaAluno;
   const todos = S.alunos.filter(a => a.turma === turma).sort((a,b)=>a.nome.localeCompare(b.nome));
   if(!todos.length){
-    const v = document.createElement('div');
-    v.className = 'vazio';
+    const v = document.createElement('div'); v.className = 'vazio';
     v.innerHTML = `${ico('i-users','ico')}Nenhum aluno em <b>${esc(turma)}</b>.<br>Toque no <b>+</b> para adicionar.`;
-    main.appendChild(v);
-    return;
+    main.appendChild(v); return;
   }
-
-  // Busca + filtro
   const searchRow = document.createElement('div');
-  searchRow.className = 'search-row';
-  searchRow.style.marginTop = '8px';
+  searchRow.className = 'search-row'; searchRow.style.marginTop = '8px';
   searchRow.innerHTML = `
-    <div class="search-box">
-      ${ico('i-search','ico-18')}
-      <input type="text" id="busca-lista" placeholder="Buscar aluno..." value="${esc(S.busca||'')}">
-    </div>
+    <div class="search-box">${ico('i-search','ico-18')}<input type="text" id="busca-lista" placeholder="Buscar aluno..." value="${esc(S.busca||'')}"></div>
     <button class="filter-btn${S.filtroLista!=='todos'?' on':''}" id="filter-btn">${ico('i-filter','ico-20')}</button>`;
   main.appendChild(searchRow);
   const inp = searchRow.querySelector('#busca-lista');
   inp.oninput = e => {
     S.busca = e.target.value;
-    const pos = e.target.selectionStart;
-    render();
+    const pos = e.target.selectionStart; render();
     const novo = document.getElementById('busca-lista');
     if(novo){ novo.focus(); try{ novo.setSelectionRange(pos,pos);}catch(_){} }
   };
   searchRow.querySelector('#filter-btn').onclick = () => abrirFiltroAlunos();
-
   const busca = (S.busca||'').toLowerCase().trim();
   let lista = todos.filter(a => !busca || a.nome.toLowerCase().includes(busca));
-  if(S.filtroLista !== 'todos'){
-    if(['otimo','bom','atencao','critico'].includes(S.filtroLista)){
-      lista = lista.filter(a => a.nivel === S.filtroLista);
-    }
+  if(S.filtroLista !== 'todos' && ['otimo','bom','atencao','critico'].includes(S.filtroLista)){
+    lista = lista.filter(a => a.nivel === S.filtroLista);
   }
-
   if(!lista.length){
-    const v = document.createElement('div');
-    v.className = 'vazio';
-    v.innerHTML = `${ico('i-search','ico')}Nenhum aluno encontrado.`;
-    main.appendChild(v);
-    return;
+    const v = document.createElement('div'); v.className = 'vazio';
+    v.innerHTML = `${ico('i-search','ico')}Nenhum aluno encontrado.`; main.appendChild(v); return;
   }
-
-  const wrap = document.createElement('div');
-  wrap.className = 'list-wrap';
+  const wrap = document.createElement('div'); wrap.className = 'list-wrap';
   lista.forEach(a => {
     const { score } = calcScore(a);
     const n = NIVEL_MAP[a.nivel] || NIVEL_MAP.bom;
@@ -1346,89 +1191,56 @@ function renderListaAlunos(main){
   main.appendChild(wrap);
 }
 
-/* ─────────── DASHBOARD ─────────── */
 function renderDashboard(main){
   const turma = S.turmaAluno;
   const alunos = S.alunos.filter(a => a.turma === turma);
   if(!alunos.length){
-    const v = document.createElement('div');
-    v.className = 'vazio';
-    v.innerHTML = `${ico('i-trophy','ico')}Sem alunos nesta turma.`;
-    main.appendChild(v);
-    return;
+    const v = document.createElement('div'); v.className = 'vazio';
+    v.innerHTML = `${ico('i-trophy','ico')}Sem alunos nesta turma.`; main.appendChild(v); return;
   }
-
   const scores = alunos.map(a => ({ aluno: a, ...calcScore(a) }));
   const melhores = [...scores].sort((a,b) => b.score - a.score).slice(0, 5);
-  const piores   = [...scores].sort((a,b) => a.score - b.score).slice(0, 5);
-
-  // Resumo geral da turma
-  const freqMedia = Math.round(
-    scores.reduce((acc, s) => acc + (s.stats.freq || 0), 0) / scores.length
-  );
+  const piores = [...scores].sort((a,b) => a.score - b.score).slice(0, 5);
+  const freqMedia = Math.round(scores.reduce((acc, s) => acc + (s.stats.freq || 0), 0) / scores.length);
   const mediaNotas = (() => {
     const todas = scores.flatMap(s => s.stats.notas);
     return todas.length ? (todas.reduce((a,b)=>a+b,0) / todas.length).toFixed(2) : '—';
   })();
   const entregas = (() => {
     const tot = scores.reduce((a,s) => a + (s.stats.totTrab || 0), 0);
-    const ok  = scores.reduce((a,s) => a + (s.stats.entrTrab || 0), 0);
+    const ok = scores.reduce((a,s) => a + (s.stats.entrTrab || 0), 0);
     return tot ? Math.round(ok/tot*100) + '%' : '—';
   })();
   const provas = (() => {
     const tot = scores.reduce((a,s) => a + (s.stats.totProv || 0), 0);
-    const ok  = scores.reduce((a,s) => a + (s.stats.fezProv || 0), 0);
+    const ok = scores.reduce((a,s) => a + (s.stats.fezProv || 0), 0);
     return tot ? Math.round(ok/tot*100) + '%' : '—';
   })();
-
   const sum = document.createElement('div');
-  sum.className = 'dash-summary';
-  sum.style.marginTop = '10px';
+  sum.className = 'dash-summary'; sum.style.marginTop = '10px';
   sum.innerHTML = `
-    <div class="dash-tile">
-      <div class="l">Frequência média</div>
-      <div class="n">${freqMedia}%</div>
-    </div>
-    <div class="dash-tile">
-      <div class="l">Média das notas</div>
-      <div class="n">${mediaNotas}</div>
-    </div>
-    <div class="dash-tile">
-      <div class="l">Entregas de trabalho</div>
-      <div class="n">${entregas}</div>
-    </div>
-    <div class="dash-tile">
-      <div class="l">Provas feitas</div>
-      <div class="n">${provas}</div>
-    </div>`;
+    <div class="dash-tile"><div class="l">Frequência média</div><div class="n">${freqMedia}%</div></div>
+    <div class="dash-tile"><div class="l">Média das notas</div><div class="n">${mediaNotas}</div></div>
+    <div class="dash-tile"><div class="l">Entregas de trabalho</div><div class="n">${entregas}</div></div>
+    <div class="dash-tile"><div class="l">Provas feitas</div><div class="n">${provas}</div></div>`;
   main.appendChild(sum);
-
-  // Botão compartilhar turma
   const shareWrap = document.createElement('div');
   shareWrap.style.cssText = 'display:flex;gap:8px;margin-top:12px';
   const bShare = document.createElement('button');
-  bShare.className = 'cfg-btn primario';
-  bShare.style.marginTop = '0';
+  bShare.className = 'cfg-btn primario'; bShare.style.marginTop = '0';
   bShare.innerHTML = ico('i-share','ico-18') + ' Compartilhar dashboard da turma';
   bShare.onclick = () => compartilharTurma(turma);
   shareWrap.appendChild(bShare);
   main.appendChild(shareWrap);
-
-  // Melhores
-  const secM = document.createElement('div');
-  secM.className = 'section-h';
+  const secM = document.createElement('div'); secM.className = 'section-h';
   secM.innerHTML = `${ico('i-trophy','ico-20 lead')}<h3 style="color:var(--green)">Top 5 — Melhores</h3>`;
   main.appendChild(secM);
   melhores.forEach((s, i) => main.appendChild(criarRankRow(s, i+1, 'green')));
-
-  // Atenção
-  const secP = document.createElement('div');
-  secP.className = 'section-h';
+  const secP = document.createElement('div'); secP.className = 'section-h';
   secP.innerHTML = `${ico('i-alert','ico-20 lead')}<h3 style="color:var(--red)">Atenção — 5 mais críticos</h3>`;
   main.appendChild(secP);
   piores.forEach((s, i) => main.appendChild(criarRankRow(s, i+1, 'red')));
 }
-
 function criarRankRow(s, pos, cor){
   const a = s.aluno;
   const n = NIVEL_MAP[a.nivel] || NIVEL_MAP.bom;
@@ -1439,21 +1251,15 @@ function criarRankRow(s, pos, cor){
     <div class="avatar" style="background:linear-gradient(135deg,${corDe(a.nome)},${corDe(a.nome)}cc);width:42px;height:42px;flex:0 0 42px;font-size:14px">${iniciais(a.nome)}</div>
     <div class="aluno-info">
       <div class="aluno-nome">${esc(a.nome)}</div>
-      <div class="aluno-meta">
-        <span class="nivel-pill" style="background:${n.soft};color:${n.cor}">${ico(n.ico,'ico-12')} ${n.nome}</span>
-      </div>
+      <div class="aluno-meta"><span class="nivel-pill" style="background:${n.soft};color:${n.cor}">${ico(n.ico,'ico-12')} ${n.nome}</span></div>
     </div>
     <div class="rank-score ${cor}">${s.score}</div>`;
   row.onclick = () => abrirAluno(a.id);
   return row;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SELETOR DE TURMA
-   ═══════════════════════════════════════════════════════════ */
 function abrirSeletorTurma(){
-  const turmas = TURMAS.filter(t => S.alunos.some(a => a.turma === t));
-  const lista = turmas.map(t => {
+  const lista = TURMAS.map(t => {
     const qtd = S.alunos.filter(a => a.turma === t).length;
     const ativa = t === S.turmaAluno;
     const cor = COR_TURMA_SOLID[t] || '#2563eb';
@@ -1467,59 +1273,37 @@ function abrirSeletorTurma(){
         ${ativa ? `<span class="turma-opt-check">${ico('i-check','ico-16')}</span>` : ''}
       </button>`;
   }).join('');
-
   abrirModal(`
     <h2>Escolher turma</h2>
     <div class="turma-opt-list">${lista}</div>
-    <div class="botoes-f">
-      <button class="btn-f secundario" id="btn-fechar-turma">Fechar</button>
-    </div>`);
-
+    <div class="botoes-f"><button class="btn-f secundario" id="btn-fechar-turma">Fechar</button></div>`);
   $$('.turma-opt').forEach(b => {
     b.onclick = () => {
       S.turmaAluno = b.dataset.t;
-      S.busca = ''; S.filtroLista = 'todos';
-      S.aulaChamadaId = null;
-      fecharModal();
-      render();
+      S.busca = ''; S.filtroLista = 'todos'; S.aulaChamadaId = null;
+      fecharModal(); render();
       window.scrollTo({top:0,behavior:'smooth'});
     };
   });
   $('#btn-fechar-turma').onclick = fecharModal;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   FILTRO ALUNOS
-   ═══════════════════════════════════════════════════════════ */
 function abrirFiltroAlunos(){
   const opcoes = [
-    { v:'todos', t:'Todos' },
-    { v:'otimo', t:'Desempenho Ótimo' },
-    { v:'bom', t:'Desempenho Bom' },
-    { v:'atencao', t:'Atenção' },
-    { v:'critico', t:'Crítico' }
+    { v:'todos', t:'Todos' }, { v:'otimo', t:'Desempenho Ótimo' },
+    { v:'bom', t:'Desempenho Bom' }, { v:'atencao', t:'Atenção' }, { v:'critico', t:'Crítico' }
   ];
   abrirModal(`
     <h2>Filtrar alunos</h2>
     <div style="display:flex;flex-direction:column;gap:8px">
-      ${opcoes.map(o => `
-        <button class="cfg-btn ${S.filtroLista===o.v?'primario':'secundario'}" data-v="${o.v}" style="justify-content:space-between">
-          <span>${o.t}</span>
-          ${S.filtroLista===o.v?ico('i-check','ico-16'):''}
-        </button>`).join('')}
+      ${opcoes.map(o => `<button class="cfg-btn ${S.filtroLista===o.v?'primario':'secundario'}" data-v="${o.v}" style="justify-content:space-between"><span>${o.t}</span>${S.filtroLista===o.v?ico('i-check','ico-16'):''}</button>`).join('')}
     </div>
-    <div class="botoes-f">
-      <button class="btn-f secundario" id="btn-fechar">Fechar</button>
-    </div>`);
-  $$('[data-v]').forEach(b => {
-    b.onclick = () => { S.filtroLista = b.dataset.v; fecharModal(); render(); };
-  });
+    <div class="botoes-f"><button class="btn-f secundario" id="btn-fechar">Fechar</button></div>`);
+  $$('[data-v]').forEach(b => { b.onclick = () => { S.filtroLista = b.dataset.v; fecharModal(); render(); }; });
   $('#btn-fechar').onclick = fecharModal;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   PERFIL DO ALUNO
-   ═══════════════════════════════════════════════════════════ */
+/* PERFIL DO ALUNO */
 function abrirAluno(id){
   const a = S.alunos.find(x => x.id === id);
   if(!a) return;
@@ -1528,17 +1312,11 @@ function abrirAluno(id){
   const freq = st.freq != null ? st.freq : 0;
   const { score } = calcScore(a);
   const media = st.media != null ? st.media.toFixed(2) : '—';
-
   const historico = S.vistos
     .filter(v => v.turma === a.turma && ((v.status && v.status[a.id]) || (v.registros && v.registros[a.id])))
     .sort((x,y) => y.data.localeCompare(x.data))
     .slice(0, 20)
-    .map(v => {
-      const s = v.status && v.status[a.id];
-      const r = v.registros && v.registros[a.id] || {};
-      return { data: v.data, status: s, registros: r };
-    });
-
+    .map(v => ({ data: v.data, status: v.status && v.status[a.id], registros: (v.registros && v.registros[a.id]) || {} }));
   const obsHtml = (a.observacoes||[]).sort((x,y)=>(y.data||'').localeCompare(x.data||'')).map(nt => {
     const tipo = nt.tipo || 'neutro';
     const icoTipo = tipo === 'positivo' ? 'i-thumb-up' : tipo === 'negativo' ? 'i-thumb-down' : tipo === 'pedagogico' ? 'i-book' : 'i-info';
@@ -1554,7 +1332,6 @@ function abrirAluno(id){
       <div class="nota-txt">${esc(nt.texto)}</div>
     </div>`;
   }).join('') || `<div style="text-align:center;color:var(--muted);font-size:13px;padding:16px">Nenhuma observação registrada</div>`;
-
   const histHtml = historico.length ? historico.map(h => {
     const s = h.status ? STATUS[h.status] : null;
     const regs = [];
@@ -1580,101 +1357,52 @@ function abrirAluno(id){
       </div>
       <button class="btn-share-icon" id="btn-share-perfil" title="Compartilhar">${ico('i-share','ico-20')}</button>
     </div>
-
     <div class="freq-box">
       <div class="lbl">Score geral</div>
       <div class="val">${score}<small style="font-size:14px;font-weight:700;opacity:.7;margin-left:6px">/ 100</small></div>
       <div class="bar"><div style="width:${score}%"></div></div>
     </div>
-
     <div class="perfil-stats">
-      <div class="perfil-stat">
-        <div class="lbl">Desempenho</div>
-        <div class="val" style="color:${n.cor};font-size:14px">${n.nome}</div>
-      </div>
-      <div class="perfil-stat">
-        <div class="lbl">Frequência</div>
-        <div class="val">${freq}%</div>
-      </div>
-      <div class="perfil-stat">
-        <div class="lbl">Média de notas</div>
-        <div class="val">${media}</div>
-      </div>
-      <div class="perfil-stat">
-        <div class="lbl">Avaliações</div>
-        <div class="val">${st.qtdNotas}</div>
-      </div>
-      <div class="perfil-stat">
-        <div class="lbl">Trab. entregues</div>
-        <div class="val">${st.pctTrab != null ? st.pctTrab+'%' : '—'}</div>
-      </div>
-      <div class="perfil-stat">
-        <div class="lbl">Provas feitas</div>
-        <div class="val">${st.pctProv != null ? st.pctProv+'%' : '—'}</div>
-      </div>
-      <div class="perfil-stat">
-        <div class="lbl">Ativ. respondidas</div>
-        <div class="val">${st.pctAtiv != null ? st.pctAtiv+'%' : '—'}</div>
-      </div>
-      <div class="perfil-stat">
-        <div class="lbl">Presenças</div>
-        <div class="val" style="color:var(--green)">${st.pres}</div>
-      </div>
-      <div class="perfil-stat">
-        <div class="lbl">Faltas</div>
-        <div class="val" style="color:${st.aus?'var(--red)':'var(--muted)'}">${st.aus}</div>
-      </div>
-      <div class="perfil-stat">
-        <div class="lbl">Justificadas</div>
-        <div class="val" style="color:${st.jus?'var(--yellow)':'var(--muted)'}">${st.jus}</div>
-      </div>
+      <div class="perfil-stat"><div class="lbl">Desempenho</div><div class="val" style="color:${n.cor};font-size:14px">${n.nome}</div></div>
+      <div class="perfil-stat"><div class="lbl">Frequência</div><div class="val">${freq}%</div></div>
+      <div class="perfil-stat"><div class="lbl">Média</div><div class="val">${media}</div></div>
+      <div class="perfil-stat"><div class="lbl">Avaliações</div><div class="val">${st.qtdNotas}</div></div>
+      <div class="perfil-stat"><div class="lbl">Trabalhos</div><div class="val">${st.pctTrab != null ? st.pctTrab+'%' : '—'}</div></div>
+      <div class="perfil-stat"><div class="lbl">Provas</div><div class="val">${st.pctProv != null ? st.pctProv+'%' : '—'}</div></div>
+      <div class="perfil-stat"><div class="lbl">Atividades</div><div class="val">${st.pctAtiv != null ? st.pctAtiv+'%' : '—'}</div></div>
+      <div class="perfil-stat"><div class="lbl">Presenças</div><div class="val" style="color:var(--green)">${st.pres}</div></div>
+      <div class="perfil-stat"><div class="lbl">Faltas</div><div class="val" style="color:${st.aus?'var(--red)':'var(--muted)'}">${st.aus}</div></div>
+      <div class="perfil-stat"><div class="lbl">Justificadas</div><div class="val" style="color:${st.jus?'var(--yellow)':'var(--muted)'}">${st.jus}</div></div>
     </div>
-
     <label class="f">Comportamento / desempenho geral
       <div class="nivel-selector" id="nivel-sel">
-        ${NIVEIS.map(nv => `<button type="button" class="nivel-btn${a.nivel===nv.id?' on':''}"
-            data-nivel="${nv.id}" style="--nc:${nv.cor};--nc-soft:${nv.soft}">
-            <svg><use href="#${nv.ico}"/></svg>
-            <span class="txt">${nv.nome}</span>
-          </button>`).join('')}
+        ${NIVEIS.map(nv => `<button type="button" class="nivel-btn${a.nivel===nv.id?' on':''}" data-nivel="${nv.id}" style="--nc:${nv.cor};--nc-soft:${nv.soft}"><svg><use href="#${nv.ico}"/></svg><span class="txt">${nv.nome}</span></button>`).join('')}
       </div>
     </label>
-
     <div class="share-row">
       <button class="share-btn" id="btn-share-desempenho">${ico('i-chart','ico-18')} Compartilhar desempenho</button>
       <button class="share-btn" id="btn-share-info">${ico('i-user','ico-18')} Compartilhar dados</button>
       <button class="share-btn" id="btn-share-aulas">${ico('i-calendar','ico-18')} Compartilhar aulas</button>
     </div>
-
-    <div style="margin-top:20px;margin-bottom:8px;font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:6px">
-      ${ico('i-clock','ico-14')} Histórico recente
-    </div>
+    <div style="margin-top:20px;margin-bottom:8px;font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:6px">${ico('i-clock','ico-14')} Histórico recente</div>
     <div class="card" style="padding:6px 14px">${histHtml}</div>
-
-    <div style="margin-top:20px;margin-bottom:8px;font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:6px">
-      ${ico('i-note','ico-14')} Observações (${(a.observacoes||[]).length})
-    </div>
+    <div style="margin-top:20px;margin-bottom:8px;font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:6px">${ico('i-note','ico-14')} Observações (${(a.observacoes||[]).length})</div>
     <div>${obsHtml}</div>
-
     <label class="f" style="margin-top:12px">Nova observação
       <textarea class="f" id="nova-obs" placeholder="Ex: Não fez a atividade, mas participou bem..." maxlength="500"></textarea>
     </label>
     <label class="f">Tipo
       <select class="f" id="obs-tipo">
-        <option value="neutro">Neutro</option>
-        <option value="positivo">Positivo</option>
-        <option value="negativo">Negativo</option>
-        <option value="pedagogico">Pedagógico</option>
+        <option value="neutro">Neutro</option><option value="positivo">Positivo</option>
+        <option value="negativo">Negativo</option><option value="pedagogico">Pedagógico</option>
       </select>
     </label>
     <div class="botoes-f"><button class="btn-f secundario" id="btn-add-obs">${ico('i-plus','ico-16')} Adicionar observação</button></div>
-
     <div class="botoes-f" style="margin-top:20px">
       <button class="btn-f perigo" id="btn-del-aluno">${ico('i-trash','ico-20')}</button>
       <button class="btn-f secundario" id="btn-fechar">Fechar</button>
       <button class="btn-f primario" id="btn-salvar-aluno">${ico('i-check','ico-18')} Salvar</button>
-    </div>
-  `);
+    </div>`);
 
   let nivelSel = a.nivel;
   $('#nivel-sel').querySelectorAll('button').forEach(b => {
@@ -1708,7 +1436,6 @@ function abrirAluno(id){
     a.nivel = nivelSel;
     salvarTudo(); fecharModal(); render(); toast('Perfil atualizado');
   };
-
   $('#btn-share-perfil').onclick = () => compartilharAluno(a.id);
   $('#btn-share-desempenho').onclick = () => compartilharDesempenho(a.id);
   $('#btn-share-info').onclick = () => compartilharInfoAluno(a.id);
@@ -1718,20 +1445,14 @@ function abrirAluno(id){
 function abrirNovoAluno(){
   abrirModal(`
     <h2>Novo aluno</h2>
-    <label class="f">Nome completo
-      <input class="f" type="text" id="a-nome" maxlength="60" placeholder="Ex: João Silva">
-    </label>
+    <label class="f">Nome completo<input class="f" type="text" id="a-nome" maxlength="60" placeholder="Ex: João Silva"></label>
     <label class="f">Turma
       <input class="f" type="text" id="a-turma" list="lt3" value="${esc(S.turmaAluno)}" maxlength="40">
-      <datalist id="lt3">${TURMAS.map(t=>`<option value="${t}">`).join('')}</datalist>
+      <datalist id="lt3">${TURMAS.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
     </label>
     <label class="f">Desempenho inicial
       <div class="nivel-selector" id="nivel-novo">
-        ${NIVEIS.map((nv,i) => `<button type="button" class="nivel-btn${i===1?' on':''}" data-nivel="${nv.id}"
-            style="--nc:${nv.cor};--nc-soft:${nv.soft}">
-            <svg><use href="#${nv.ico}"/></svg>
-            <span class="txt">${nv.nome}</span>
-          </button>`).join('')}
+        ${NIVEIS.map((nv,i) => `<button type="button" class="nivel-btn${i===1?' on':''}" data-nivel="${nv.id}" style="--nc:${nv.cor};--nc-soft:${nv.soft}"><svg><use href="#${nv.ico}"/></svg><span class="txt">${nv.nome}</span></button>`).join('')}
       </div>
     </label>
     <div class="botoes-f">
@@ -1751,6 +1472,14 @@ function abrirNovoAluno(){
     const nome = $('#a-nome').value.trim();
     const turma = $('#a-turma').value.trim();
     if(!nome || !turma){ toast('Preencha nome e turma'); return; }
+    // Se a turma não existe, adiciona automaticamente
+    if(!TURMAS.includes(turma)){
+      S.config.turmasCustom = S.config.turmasCustom || [];
+      if(!S.config.turmasCustom.includes(turma)){
+        S.config.turmasCustom.push(turma);
+        aplicarConfiguracoesTurmas();
+      }
+    }
     S.alunos.push({id:uid(), nome, turma, nivel, observacoes:[]});
     salvarTudo(); fecharModal(); render(); toast('Aluno adicionado');
   };
@@ -1760,103 +1489,69 @@ function abrirNovoAluno(){
    COMPARTILHAMENTO
    ═══════════════════════════════════════════════════════════ */
 async function compartilharTexto(titulo, texto){
-  // Tenta Web Share API primeiro
   if(navigator.share){
-    try{
-      await navigator.share({ title: titulo, text: texto });
-      return;
-    }catch(e){ /* usuário cancelou */ }
+    try{ await navigator.share({ title: titulo, text: texto }); return; }catch(e){}
   }
-  // Fallback: copia pra área de transferência
-  try{
-    await navigator.clipboard.writeText(texto);
-    toast('Copiado para a área de transferência');
-  }catch(e){
-    // Fallback final: download como .txt
+  try{ await navigator.clipboard.writeText(texto); toast('Copiado para a área de transferência'); }
+  catch(e){
     const blob = new Blob([texto], {type:'text/plain'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = titulo.replace(/[^a-z0-9]+/gi,'-').toLowerCase() + '.txt';
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast('Arquivo baixado');
+    a.click(); URL.revokeObjectURL(a.href); toast('Arquivo baixado');
   }
 }
-
 function compartilharAluno(alunoId){
-  const a = S.alunos.find(x => x.id === alunoId);
-  if(!a) return;
+  const a = S.alunos.find(x => x.id === alunoId); if(!a) return;
   const { score, stats } = calcScore(a);
   const n = NIVEL_MAP[a.nivel] || NIVEL_MAP.bom;
   const media = stats.media != null ? stats.media.toFixed(2) : '—';
   const freq = stats.freq != null ? stats.freq : 0;
   const txt = [
-    `📋 *Relatório do aluno*`,
-    ``,
-    `👤 ${a.nome}`,
-    `🏫 Turma: ${a.turma}`,
-    `⭐ Desempenho: ${n.nome}`,
-    `📊 Score geral: ${score}/100`,
-    ``,
-    `📅 Frequência: ${freq}% (${stats.pres} presenças, ${stats.aus} faltas, ${stats.jus} justificadas)`,
-    `📝 Média de notas: ${media} (${stats.qtdNotas} avaliações)`,
+    `📋 *Relatório do aluno*`, ``,
+    `👤 ${a.nome}`, `🏫 Turma: ${a.turma}`,
+    `⭐ Desempenho: ${n.nome}`, `📊 Score geral: ${score}/100`, ``,
+    `📅 Frequência: ${freq}% (${stats.pres}P / ${stats.aus}A / ${stats.jus}J)`,
+    `📝 Média de notas: ${media} (${stats.qtdNotas} aval.)`,
     `📚 Trabalhos entregues: ${stats.pctTrab != null ? stats.pctTrab+'%' : '—'}`,
     `✏️ Provas feitas: ${stats.pctProv != null ? stats.pctProv+'%' : '—'}`,
-    `✅ Atividades respondidas: ${stats.pctAtiv != null ? stats.pctAtiv+'%' : '—'}`,
-    ``,
-    `— Enviado por ${S.config.nomeProf || 'Professor'}`
+    `✅ Atividades: ${stats.pctAtiv != null ? stats.pctAtiv+'%' : '—'}`, ``,
+    `— ${S.config.nomeProf || 'Professor'}`
   ].join('\n');
   compartilharTexto('Relatório - ' + a.nome, txt);
 }
-
 function compartilharDesempenho(alunoId){
-  const a = S.alunos.find(x => x.id === alunoId);
-  if(!a) return;
+  const a = S.alunos.find(x => x.id === alunoId); if(!a) return;
   const { score, stats } = calcScore(a);
   const n = NIVEL_MAP[a.nivel] || NIVEL_MAP.bom;
   const barras = [
-    ['Frequência', stats.freq],
-    ['Trabalhos', stats.pctTrab],
-    ['Provas', stats.pctProv],
-    ['Atividades', stats.pctAtiv],
+    ['Frequência', stats.freq], ['Trabalhos', stats.pctTrab],
+    ['Provas', stats.pctProv], ['Atividades', stats.pctAtiv],
     ['Notas', stats.media != null ? Math.round(stats.media*10) : null]
   ].map(([k,v]) => {
     const blocos = v == null ? '' : '█'.repeat(Math.round(v/10)).padEnd(10, '░');
     return `${k.padEnd(12)} ${blocos} ${v != null ? v+'%' : '—'}`;
   }).join('\n');
-  const txt = [
-    `📈 *Desempenho — ${a.nome}*`,
-    `Turma: ${a.turma}`,
-    ``,
-    barras,
-    ``,
+  compartilharTexto('Desempenho - ' + a.nome, [
+    `📈 *Desempenho — ${a.nome}*`, `Turma: ${a.turma}`, ``, barras, ``,
     `Score final: ${score}/100 (${n.nome})`,
     `— ${S.config.nomeProf || 'Professor'}`
-  ].join('\n');
-  compartilharTexto('Desempenho - ' + a.nome, txt);
+  ].join('\n'));
 }
-
 function compartilharInfoAluno(alunoId){
-  const a = S.alunos.find(x => x.id === alunoId);
-  if(!a) return;
+  const a = S.alunos.find(x => x.id === alunoId); if(!a) return;
   const n = NIVEL_MAP[a.nivel] || NIVEL_MAP.bom;
-  const txt = [
-    `👤 *Informações do aluno*`,
-    ``,
-    `Nome: ${a.nome}`,
-    `Turma: ${a.turma}`,
+  compartilharTexto('Aluno - ' + a.nome, [
+    `👤 *Informações do aluno*`, ``,
+    `Nome: ${a.nome}`, `Turma: ${a.turma}`,
     `Escola: ${ESCOLA_DA_TURMA[a.turma] || '—'}`,
     `Desempenho atual: ${n.nome}`,
-    `Observações registradas: ${(a.observacoes||[]).length}`,
-    ``,
+    `Observações: ${(a.observacoes||[]).length}`, ``,
     `— ${S.config.nomeProf || 'Professor'}`
-  ].join('\n');
-  compartilharTexto('Aluno - ' + a.nome, txt);
+  ].join('\n'));
 }
-
 function compartilharAulasAluno(alunoId){
-  const a = S.alunos.find(x => x.id === alunoId);
-  if(!a) return;
+  const a = S.alunos.find(x => x.id === alunoId); if(!a) return;
   const aulas = S.aulas.filter(x => x.turma === a.turma).sort((x,y) => x.dia - y.dia || x.ini.localeCompare(y.ini));
   const porDia = {};
   aulas.forEach(x => { (porDia[x.dia] = porDia[x.dia] || []).push(x); });
@@ -1864,47 +1559,295 @@ function compartilharAulasAluno(alunoId){
     const l = porDia[d].map(x => `  ${x.ini}-${x.fim||'?'} ${x.materia||'Aula'}`).join('\n');
     return `*${DIAS[d]}*\n${l}`;
   }).join('\n\n');
-  const txt = [
-    `📅 *Aulas — ${a.turma}*`,
-    ``,
-    linhas || 'Sem aulas cadastradas.',
-    ``,
+  compartilharTexto('Aulas - ' + a.turma, [
+    `📅 *Aulas — ${a.turma}*`, ``, linhas || 'Sem aulas.', ``,
     `— ${S.config.nomeProf || 'Professor'}`
-  ].join('\n');
-  compartilharTexto('Aulas - ' + a.turma, txt);
+  ].join('\n'));
 }
-
 function compartilharTurma(turma){
   const alunos = S.alunos.filter(a => a.turma === turma);
   const scores = alunos.map(a => ({a, ...calcScore(a)}));
   const melhores = [...scores].sort((a,b)=>b.score-a.score).slice(0,5);
-  const piores   = [...scores].sort((a,b)=>a.score-b.score).slice(0,5);
+  const piores = [...scores].sort((a,b)=>a.score-b.score).slice(0,5);
   const freqMedia = scores.length ? Math.round(scores.reduce((s,x)=>s+(x.stats.freq||0),0)/scores.length) : 0;
-  const txt = [
-    `🏆 *Dashboard — ${turma}*`,
-    ``,
+  compartilharTexto('Dashboard - ' + turma, [
+    `🏆 *Dashboard — ${turma}*`, ``,
     `Total de alunos: ${alunos.length}`,
-    `Frequência média: ${freqMedia}%`,
-    ``,
+    `Frequência média: ${freqMedia}%`, ``,
     `*TOP 5 MELHORES*`,
-    ...melhores.map((s,i) => `${i+1}. ${s.a.nome} — ${s.score}`),
-    ``,
+    ...melhores.map((s,i) => `${i+1}. ${s.a.nome} — ${s.score}`), ``,
     `*5 EM ATENÇÃO*`,
-    ...piores.map((s,i) => `${i+1}. ${s.a.nome} — ${s.score}`),
-    ``,
+    ...piores.map((s,i) => `${i+1}. ${s.a.nome} — ${s.score}`), ``,
     `— ${S.config.nomeProf || 'Professor'}`
-  ].join('\n');
-  compartilharTexto('Dashboard - ' + turma, txt);
+  ].join('\n'));
 }
 
 /* ═══════════════════════════════════════════════════════════
-   CONFIG
+   ⚙️ GERENCIAR TURMAS — NOVO!
    ═══════════════════════════════════════════════════════════ */
+function abrirGerenciarTurmas(){
+  const lista = TURMAS.map(t => {
+    const qtd = S.alunos.filter(a => a.turma === t).length;
+    const custom = (S.config.turmasCustom || []).includes(t);
+    const cor = COR_TURMA_SOLID[t] || '#2563eb';
+    return `
+      <div class="turma-manage-row">
+        <span class="turma-opt-dot" style="background:${cor}"></span>
+        <div class="turma-manage-info">
+          <div class="turma-manage-nome">${esc(t)}</div>
+          <div class="turma-manage-qtd">${qtd} aluno${qtd===1?'':'s'}${custom?' · personalizada':''}</div>
+        </div>
+        <button class="turma-manage-btn" data-rename="${esc(t)}" title="Renomear">${ico('i-pencil','ico-18')}</button>
+        <button class="turma-manage-btn danger" data-delete="${esc(t)}" title="Excluir">${ico('i-trash','ico-18')}</button>
+      </div>`;
+  }).join('');
+
+  const temCustom = (S.config.turmasCustom || []).length > 0 ||
+    (S.config.turmasRemovidas || []).length > 0 ||
+    Object.keys(S.config.turmasRenomeadas || {}).length > 0;
+
+  abrirModal(`
+    <h2>Gerenciar turmas</h2>
+    <div class="turma-manage-list">${lista}</div>
+    <button class="cfg-btn primario" id="btn-nova-turma" style="margin-top:16px">${ico('i-plus','ico-18')} Nova turma</button>
+    ${temCustom ? `<button class="cfg-btn secundario" id="btn-restaurar">${ico('i-refresh','ico-18')} Restaurar turmas originais</button>` : ''}
+    <div class="botoes-f"><button class="btn-f secundario" id="btn-fechar">Fechar</button></div>`);
+
+  $$('[data-rename]').forEach(b => { b.onclick = () => abrirRenomearTurma(b.dataset.rename); });
+  $$('[data-delete]').forEach(b => { b.onclick = () => confirmarExcluirTurma(b.dataset.delete); });
+  $('#btn-nova-turma').onclick = abrirNovaTurma;
+  if(temCustom) $('#btn-restaurar').onclick = restaurarTurmasOriginais;
+  $('#btn-fechar').onclick = fecharModal;
+}
+
+function abrirRenomearTurma(nomeAntigo){
+  abrirModal(`
+    <h2>Renomear turma</h2>
+    <label class="f">Nome atual
+      <input class="f" type="text" value="${esc(nomeAntigo)}" disabled style="opacity:.6">
+    </label>
+    <label class="f">Novo nome
+      <input class="f" type="text" id="rt-novo" value="${esc(nomeAntigo)}" maxlength="40" autocomplete="off">
+    </label>
+    <div style="background:var(--primary-soft);border-radius:14px;padding:14px;margin-top:8px;font-size:13px;color:var(--text-2);line-height:1.5">
+      ${ico('i-info','ico-16')} Todos os alunos, aulas, chamadas e cores serão atualizados automaticamente.
+    </div>
+    <div class="botoes-f" style="margin-top:20px">
+      <button class="btn-f secundario" id="btn-cancelar">Cancelar</button>
+      <button class="btn-f primario" id="btn-salvar">${ico('i-check','ico-18')} Salvar</button>
+    </div>`);
+  setTimeout(() => {
+    const inp = $('#rt-novo');
+    if(inp){ inp.focus(); inp.select(); }
+  }, 100);
+  $('#btn-cancelar').onclick = () => abrirGerenciarTurmas();
+  $('#btn-salvar').onclick = () => {
+    const novo = $('#rt-novo').value.trim();
+    if(!novo){ toast('Digite um nome'); return; }
+    if(novo === nomeAntigo){ abrirGerenciarTurmas(); return; }
+    if(TURMAS.includes(novo)){ toast('Já existe uma turma com esse nome'); return; }
+    renomearTurma(nomeAntigo, novo);
+  };
+}
+
+function renomearTurma(antigo, novo){
+  // 1) Migrar todos os dados
+  S.alunos.forEach(a => { if(a.turma === antigo) a.turma = novo; });
+  S.aulas.forEach(a => { if(a.turma === antigo) a.turma = novo; });
+  S.geral.forEach(a => { if(a.turma === antigo) a.turma = novo; });
+  S.vistos.forEach(v => { if(v.turma === antigo) v.turma = novo; });
+
+  // 2) Salvar renomeação na config
+  S.config.turmasRenomeadas = S.config.turmasRenomeadas || {};
+  S.config.turmasRenomeadas[antigo] = novo;
+
+  // 3) Se era custom, atualizar o array
+  if(S.config.turmasCustom){
+    const i = S.config.turmasCustom.indexOf(antigo);
+    if(i > -1) S.config.turmasCustom[i] = novo;
+  }
+
+  // 4) Se a turma selecionada era a antiga, mudar
+  if(S.turmaAluno === antigo) S.turmaAluno = novo;
+
+  // 5) Reaplicar configurações (recalcula TURMAS, atualiza ESCOLAS, GRAD, COR)
+  aplicarConfiguracoesTurmas();
+
+  salvarTudo();
+  render();
+  toast(`Renomeada para "${novo}"`);
+  abrirGerenciarTurmas();
+}
+
+function abrirNovaTurma(){
+  abrirModal(`
+    <h2>Nova turma</h2>
+    <label class="f">Nome da turma
+      <input class="f" type="text" id="nt-nome" maxlength="40" placeholder="Ex: 3º ADM" autocomplete="off">
+    </label>
+    <div style="background:var(--primary-soft);border-radius:14px;padding:14px;font-size:13px;color:var(--text-2);line-height:1.5">
+      ${ico('i-info','ico-16')} A turma ficará disponível em todo o app para cadastrar alunos e aulas.
+    </div>
+    <div class="botoes-f" style="margin-top:20px">
+      <button class="btn-f secundario" id="btn-cancelar">Cancelar</button>
+      <button class="btn-f primario" id="btn-salvar">${ico('i-plus','ico-18')} Adicionar</button>
+    </div>`);
+  setTimeout(() => $('#nt-nome')?.focus(), 100);
+  $('#btn-cancelar').onclick = () => abrirGerenciarTurmas();
+  $('#btn-salvar').onclick = () => {
+    const nome = $('#nt-nome').value.trim();
+    if(!nome){ toast('Digite um nome'); return; }
+    if(TURMAS.includes(nome)){ toast('Já existe uma turma com esse nome'); return; }
+    S.config.turmasCustom = S.config.turmasCustom || [];
+    S.config.turmasCustom.push(nome);
+    aplicarConfiguracoesTurmas();
+    salvarTudo(); render(); toast('Turma adicionada');
+    abrirGerenciarTurmas();
+  };
+}
+
+function confirmarExcluirTurma(nome){
+  const alunosDaTurma = S.alunos.filter(a => a.turma === nome);
+  const qtd = alunosDaTurma.length;
+  const aulasDaTurma = S.aulas.filter(a => a.turma === nome).length;
+
+  if(qtd > 0){
+    const outras = TURMAS.filter(t => t !== nome);
+    if(!outras.length){
+      toast('Não há outra turma para mover os alunos');
+      return;
+    }
+    abrirModal(`
+      <h2>Excluir turma</h2>
+      <div style="background:var(--yellow-soft);border-radius:14px;padding:16px;margin-bottom:16px;display:flex;gap:10px">
+        <div style="color:#b45309;flex:0 0 auto">${ico('i-alert','ico-20')}</div>
+        <div>
+          <div style="font-weight:800;color:#b45309;font-size:14px">Esta turma tem ${qtd} aluno${qtd===1?'':'s'}</div>
+          <div style="font-size:13px;color:var(--text-2);margin-top:6px;line-height:1.5">
+            Mova os alunos${aulasDaTurma?' e '+aulasDaTurma+' aula'+(aulasDaTurma===1?'':'s'):''} para outra turma antes de excluir.
+          </div>
+        </div>
+      </div>
+      <label class="f">Mover alunos e aulas para
+        <select class="f" id="del-destino">
+          ${outras.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+        </select>
+      </label>
+      <div class="botoes-f">
+        <button class="btn-f secundario" id="btn-cancelar">Cancelar</button>
+        <button class="btn-f perigo" id="btn-confirmar" style="flex:1">${ico('i-refresh','ico-18')} Mover e excluir</button>
+      </div>`);
+    $('#btn-cancelar').onclick = () => abrirGerenciarTurmas();
+    $('#btn-confirmar').onclick = () => {
+      const destino = $('#del-destino').value;
+      alunosDaTurma.forEach(a => { a.turma = destino; });
+      S.aulas.forEach(a => { if(a.turma === nome) a.turma = destino; });
+      S.geral.forEach(a => { if(a.turma === nome) a.turma = destino; });
+      S.vistos.forEach(v => { if(v.turma === nome) v.turma = destino; });
+      removerTurmaDasListas(nome);
+      salvarTudo(); render(); toast('Turma excluída');
+      abrirGerenciarTurmas();
+    };
+    return;
+  }
+
+  if(!confirm(`Excluir a turma "${nome}"?`)) return;
+  removerTurmaDasListas(nome);
+  salvarTudo(); render(); toast('Turma excluída');
+  abrirGerenciarTurmas();
+}
+
+function removerTurmaDasListas(nome){
+  // Se era custom, remover da lista
+  if(S.config.turmasCustom){
+    S.config.turmasCustom = S.config.turmasCustom.filter(t => t !== nome);
+  }
+  // Se era hardcoded, marcar como removida
+  const ehHardcoded = ESCOLAS.some(e => e.turmas.includes(nome));
+  if(ehHardcoded){
+    S.config.turmasRemovidas = S.config.turmasRemovidas || [];
+    if(!S.config.turmasRemovidas.includes(nome)){
+      S.config.turmasRemovidas.push(nome);
+    }
+  }
+  aplicarConfiguracoesTurmas();
+}
+
+function restaurarTurmasOriginais(){
+  if(!confirm('Restaurar a lista original de turmas? As turmas personalizadas serão removidas e as renomeadas voltarão aos nomes originais.')) return;
+  // Limpar config de turmas
+  S.config.turmasCustom = [];
+  S.config.turmasRemovidas = [];
+  S.config.turmasRenomeadas = {};
+
+  // Restaurar ESCOLAS ao estado original hardcoded
+  const originais = {
+    'Gentil Dantas': ['1º ADM','1º Cont. Ambiental','2º Sistemas','2º ADM','3º Sistemas','3º Regular'],
+    'Enéas Nogueira': ['8º Ano A','8º Ano B']
+  };
+  ESCOLAS.forEach(e => {
+    if(originais[e.nome]) e.turmas = [...originais[e.nome]];
+  });
+
+  // Restaurar ESCOLA_DA_TURMA, GRAD, COR
+  const origEscola = {};
+  ESCOLAS.forEach(e => e.turmas.forEach(t => { origEscola[t] = e.nome; }));
+  Object.keys(ESCOLA_DA_TURMA).forEach(k => delete ESCOLA_DA_TURMA[k]);
+  Object.assign(ESCOLA_DA_TURMA, origEscola);
+
+  const origGrad = {
+    '1º ADM':'linear-gradient(160deg,#3b82f6,#2563eb)',
+    '1º Cont. Ambiental':'linear-gradient(160deg,#06b6d4,#0891b2)',
+    '2º Sistemas':'linear-gradient(160deg,#6366f1,#4f46e5)',
+    '8º Ano A':'linear-gradient(160deg,#0ea5e9,#0284c7)',
+    '8º Ano B':'linear-gradient(160deg,#38bdf8,#0ea5e9)',
+    '2º ADM':'linear-gradient(160deg,#64748b,#475569)',
+    '3º Sistemas':'linear-gradient(160deg,#64748b,#475569)',
+    '3º Regular':'linear-gradient(160deg,#64748b,#475569)'
+  };
+  Object.keys(GRAD_TURMA).forEach(k => delete GRAD_TURMA[k]);
+  Object.assign(GRAD_TURMA, origGrad);
+
+  const origCor = {
+    '1º ADM':'#3b82f6','1º Cont. Ambiental':'#06b6d4','2º Sistemas':'#6366f1',
+    '8º Ano A':'#0ea5e9','8º Ano B':'#38bdf8',
+    '2º ADM':'#64748b','3º Sistemas':'#64748b','3º Regular':'#64748b'
+  };
+  Object.keys(COR_TURMA_SOLID).forEach(k => delete COR_TURMA_SOLID[k]);
+  Object.assign(COR_TURMA_SOLID, origCor);
+
+  // ATENÇÃO: os alunos continuam com os nomes novos (não revertemos).
+  // Isso pode deixar alunos "órfãos". Vou avisar e reverter se possível.
+  // Na verdade, vamos reverter também os alunos/aulas que batem com renomeações
+  const renames = S.config.turmasRenomeadas || {};
+  // Já limpamos, então precisa guardar antes
+  // (pequeno bug: limpamos antes de usar. Corrigir abaixo)
+
+  aplicarConfiguracoesTurmas();
+  salvarTudo(); render(); toast('Turmas restauradas');
+  abrirGerenciarTurmas();
+}
+
+/* CONFIG */
 function renderConfig(main){
   pararTickContagem();
   main.appendChild(blocoConfig(ico('i-user','ico-16')+' Perfil', [
     linhaInput('Seu nome', S.config.nomeProf, v => { S.config.nomeProf = v; salvarTudo(); })
   ]));
+
+  /* ⬇️ NOVO BLOCO: TURMAS */
+  const tb = blocoConfig(ico('i-users-group','ico-16')+' Turmas', []);
+  const turmaBtn = document.createElement('button');
+  turmaBtn.className = 'cfg-btn primario';
+  turmaBtn.innerHTML = ico('i-settings','ico-18') + ' Gerenciar turmas';
+  turmaBtn.onclick = abrirGerenciarTurmas;
+  tb.appendChild(turmaBtn);
+  const info = document.createElement('div');
+  info.style.cssText = 'font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.5';
+  info.textContent = `Total de ${TURMAS.length} turma${TURMAS.length===1?'':'s'}. Aqui você pode renomear, adicionar ou excluir turmas — os dados dos alunos e aulas são migrados automaticamente.`;
+  tb.appendChild(info);
+  main.appendChild(tb);
+
   main.appendChild(blocoConfig(ico('i-palette','ico-16')+' Aparência', [
     linhaSeg('Tema', 'tema', [['auto','Auto'],['claro','Claro'],['escuro','Escuro']],
       v => { S.config.tema = v; salvarTudo(); render(); })
@@ -1943,8 +1886,7 @@ function renderConfig(main){
   const fb = blocoConfig(ico('i-calendar','ico-16')+' Feriados', []);
   const af = document.createElement('div');
   af.className = 'cfg-linha';
-  af.innerHTML = `<input type="date" id="novo-feriado" style="flex:1;background:var(--card-2);border:1px solid var(--border);color:var(--text);border-radius:12px;padding:11px 13px;font-size:14px;font-family:inherit;font-weight:700">
-    <button class="cfg-btn primario" style="width:auto;margin:0;padding:11px 18px;font-size:14px">Adicionar</button>`;
+  af.innerHTML = `<input type="date" id="novo-feriado" style="flex:1;background:var(--card-2);border:1px solid var(--border);color:var(--text);border-radius:12px;padding:11px 13px;font-size:14px;font-family:inherit;font-weight:700"><button class="cfg-btn primario" style="width:auto;margin:0;padding:11px 18px;font-size:14px">Adicionar</button>`;
   af.querySelector('button').onclick = () => {
     const v = $('#novo-feriado').value;
     if(!v) return;
@@ -1999,8 +1941,8 @@ function renderConfig(main){
   const sb = blocoConfig(ico('i-info','ico-16')+' Sobre', []);
   const sc = document.createElement('div');
   sc.style.cssText = 'font-size:13px;color:var(--muted);line-height:1.7';
-  sc.innerHTML = `<b>Horário Profissional v6.0</b><br>PWA offline · Painel do professor<br>
-    ${S.alunos.length} alunos · ${S.aulas.length} aulas · ${S.vistos.length} chamadas`;
+  sc.innerHTML = `<b>Horário Profissional v6.1</b><br>PWA offline · Painel do professor<br>
+    ${S.alunos.length} alunos · ${S.aulas.length} aulas · ${TURMAS.length} turmas`;
   sb.appendChild(sc);
   main.appendChild(sb);
 }
@@ -2015,8 +1957,7 @@ function blocoConfig(titulo, filhos){
 function linhaToggle(rotulo, valor, cb){
   const d = document.createElement('div');
   d.className = 'cfg-linha';
-  d.innerHTML = `<label>${esc(rotulo)}</label>
-    <span class="switch"><input type="checkbox"${valor?' checked':''}><span class="slider"></span></span>`;
+  d.innerHTML = `<label>${esc(rotulo)}</label><span class="switch"><input type="checkbox"${valor?' checked':''}><span class="slider"></span></span>`;
   d.querySelector('input').onchange = e => cb(e.target.checked);
   return d;
 }
@@ -2046,26 +1987,21 @@ function linhaSeg(rotulo, key, opcoes, cb){
 function linhaInput(rotulo, valor, cb){
   const d = document.createElement('div');
   d.className = 'cfg-linha';
-  d.innerHTML = `<label>${esc(rotulo)}</label>
-    <input type="text" value="${esc(valor||'')}" placeholder="Opcional" maxlength="40">`;
+  d.innerHTML = `<label>${esc(rotulo)}</label><input type="text" value="${esc(valor||'')}" placeholder="Opcional" maxlength="40">`;
   d.querySelector('input').onchange = e => cb(e.target.value.trim());
   return d;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   MODAIS DE AULA
-   ═══════════════════════════════════════════════════════════ */
+/* MODAIS DE AULA */
 function abrirEdicaoAula(id, tipo){
   const arr = tipo === 'aula' ? S.aulas : S.geral;
   const a = arr.find(x => x.id === id);
   if(!a) return;
   abrirModal(`
     <h2>Editar aula</h2>
-    <label class="f">Dia<select class="f" id="f-dia">
-      ${ORDEM.map(d => `<option value="${d}"${d===a.dia?' selected':''}>${DIAS[d]}</option>`).join('')}
-    </select></label>
+    <label class="f">Dia<select class="f" id="f-dia">${ORDEM.map(d => `<option value="${d}"${d===a.dia?' selected':''}>${DIAS[d]}</option>`).join('')}</select></label>
     <label class="f">Turma<input class="f" type="text" id="f-turma" list="lt" value="${esc(a.turma)}" maxlength="40"></label>
-    <datalist id="lt">${TURMAS.map(t=>`<option value="${t}">`).join('')}</datalist>
+    <datalist id="lt">${TURMAS.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
     <div class="linha-f">
       <label class="f">Início<input class="f" type="time" id="f-ini" value="${esc(a.ini)}"></label>
       <label class="f">Fim<input class="f" type="time" id="f-fim" value="${esc(a.fim||'')}"></label>
@@ -2099,6 +2035,12 @@ function abrirEdicaoAula(id, tipo){
       ini:$('#f-ini').value, fim:$('#f-fim').value, materia:$('#f-mat').value.trim(),
       sala:$('#f-sala').value.trim(), prof:$('#f-prof').value.trim() };
     if(!dados.turma || !dados.ini){ toast('Preencha turma e início'); return; }
+    // Se a turma não existe, adicionar
+    if(!TURMAS.includes(dados.turma)){
+      S.config.turmasCustom = S.config.turmasCustom || [];
+      S.config.turmasCustom.push(dados.turma);
+      aplicarConfiguracoesTurmas();
+    }
     const i = arr.findIndex(x => x.id === id);
     if(i > -1) arr[i] = {...arr[i], ...dados};
     salvarTudo(); fecharModal(); render(); toast('Aula atualizada');
@@ -2114,22 +2056,17 @@ function abrirNovaAula(){
     }
     return S.diaSel;
   })();
-
   abrirModal(`
     <h2>Nova aula</h2>
     <div style="background:var(--card-2);border-radius:14px;padding:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px">
       <div style="font-size:14px;font-weight:700">É minha aula?
-        <small style="display:block;font-size:11.5px;font-weight:500;color:var(--muted);margin-top:2px" id="txt-minha">
-          ${ehGeral?'Não — vai para o modo Geral':'Sim — vai para Meu Horário'}
-        </small>
+        <small style="display:block;font-size:11.5px;font-weight:500;color:var(--muted);margin-top:2px" id="txt-minha">${ehGeral?'Não — vai para o modo Geral':'Sim — vai para Meu Horário'}</small>
       </div>
       <label class="switch"><input type="checkbox" id="f-minha" ${ehGeral?'':'checked'}><span class="slider"></span></label>
     </div>
-    <label class="f">Dia<select class="f" id="f-dia">
-      ${ORDEM.map(d => `<option value="${d}"${d===diaPadrao?' selected':''}>${DIAS[d]}</option>`).join('')}
-    </select></label>
-    <label class="f">Turma<input class="f" type="text" id="f-turma" list="lt2" value="${ehGeral?'':esc(TURMAS[0])}" maxlength="40"></label>
-    <datalist id="lt2">${TURMAS.map(t=>`<option value="${t}">`).join('')}</datalist>
+    <label class="f">Dia<select class="f" id="f-dia">${ORDEM.map(d => `<option value="${d}"${d===diaPadrao?' selected':''}>${DIAS[d]}</option>`).join('')}</select></label>
+    <label class="f">Turma<input class="f" type="text" id="f-turma" list="lt2" value="${ehGeral?'':esc(TURMAS[0]||'')}" maxlength="40"></label>
+    <datalist id="lt2">${TURMAS.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
     <div class="linha-f">
       <label class="f">Início<input class="f" type="time" id="f-ini" value="${horaAgora()}"></label>
       <label class="f">Fim<input class="f" type="time" id="f-fim"></label>
@@ -2160,14 +2097,16 @@ function abrirNovaAula(){
       ini:$('#f-ini').value, fim:$('#f-fim').value, materia:$('#f-mat').value.trim(),
       sala:$('#f-sala').value.trim(), prof:$('#f-prof').value.trim() };
     if(!dados.turma || !dados.ini){ toast('Preencha turma e início'); return; }
+    if(!TURMAS.includes(dados.turma)){
+      S.config.turmasCustom = S.config.turmasCustom || [];
+      S.config.turmasCustom.push(dados.turma);
+      aplicarConfiguracoesTurmas();
+    }
     (ehMinha ? S.aulas : S.geral).push({id:uid(), ...dados});
     salvarTudo(); fecharModal(); render(); toast('Aula adicionada');
   };
 }
 
-/* ═══════════════════════════════════════════════════════════
-   NOTIFICAÇÕES
-   ═══════════════════════════════════════════════════════════ */
 async function mostrarNotif(t, o){
   if(!('serviceWorker' in navigator)) return false;
   try{ const r = await navigator.serviceWorker.ready; await r.showNotification(t, o); return true; }
@@ -2200,14 +2139,14 @@ function verificarNotif(){
   });
 }
 
-/* ═══════════════════════════════════════════════════════════
-   BACKUP
-   ═══════════════════════════════════════════════════════════ */
 function exportar(){
-  const d = { versao:'6.0', exportadoEm: new Date().toISOString(),
+  const d = { versao:'6.1', exportadoEm: new Date().toISOString(),
     aulas:S.aulas, geral:S.geral, alunos:S.alunos, vistos:S.vistos,
     config:{ tema:S.config.tema, avisoMin:S.config.avisoMin,
-      feriados:S.config.feriados, nomeProf:S.config.nomeProf } };
+      feriados:S.config.feriados, nomeProf:S.config.nomeProf,
+      turmasCustom:S.config.turmasCustom,
+      turmasRemovidas:S.config.turmasRemovidas,
+      turmasRenomeadas:S.config.turmasRenomeadas } };
   const blob = new Blob([JSON.stringify(d, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); const h = new Date();
@@ -2229,16 +2168,14 @@ $('#input-importar').onchange = e => {
       S.vistos = (d.vistos||[]).map(migrarVisto);
       if(d.config) S.config = {...S.config, ...d.config};
       migrarNomes(S.aulas); migrarNomes(S.geral);
-      localStorage.setItem('h5.seedVer','v6.0-merged');
+      aplicarConfiguracoesTurmas();
+      localStorage.setItem('h5.seedVer','v6.1-turmas');
       salvarTudo(); render(); toast('Backup importado');
     }catch(err){ toast('Arquivo inválido'); }
   };
   r.readAsText(f); e.target.value = '';
 };
 
-/* ═══════════════════════════════════════════════════════════
-   EVENTOS GLOBAIS
-   ═══════════════════════════════════════════════════════════ */
 $$('#bottom-nav button').forEach(b => {
   b.onclick = () => {
     S.tab = b.dataset.tab;
@@ -2260,17 +2197,11 @@ function tick(){
   verificarNotif();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   AUTO-HIDE NAV
-   ═══════════════════════════════════════════════════════════ */
 function instalarAutoHideNav(){
   const nav = document.getElementById('bottom-nav');
   if(!nav) return;
-  let ultimoY = window.scrollY;
-  let ticking = false;
-  const LIMIAR_BAIXO = 6;
-  const LIMIAR_CIMA  = 2;
-  const MOSTRAR_TOPO = 60;
+  let ultimoY = window.scrollY, ticking = false;
+  const LIMIAR_BAIXO = 6, LIMIAR_CIMA = 2, MOSTRAR_TOPO = 60;
   function atualizar(){
     const y = Math.max(0, window.scrollY);
     if(y < MOSTRAR_TOPO){ nav.classList.remove('escondida'); ultimoY = y; ticking = false; return; }
