@@ -203,9 +203,14 @@ function fmtData(c){ const [y,m,d]=c.split('-').map(Number); return String(d).pa
 function fmtDataCurto(c){ const [y,m,d]=c.split('-').map(Number); return String(d).padStart(2,'0')+'/'+String(m).padStart(2,'0'); }
 function toMin(h){ const [a,b]=h.split(':').map(Number); return a*60+b; }
 function diffMin(a,b){ return toMin(a)-toMin(b); }
+
 function iniciais(nome){
-  const p = nome.trim().split(/\s+/);
-  return ((p[0]||'')[0] + (p[p.length-1]||'')[0] || '?').toUpperCase();
+  const p = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  if(!p.length) return '?';
+  if(p.length === 1) return (p[0][0] || '?').toUpperCase();
+  const a = p[0][0] || '';
+  const b = p[p.length - 1][0] || '';
+  return (a + b).toUpperCase() || '?';
 }
 function corDe(str){
   const cores=['#3b82f6','#06b6d4','#6366f1','#0ea5e9','#38bdf8','#8b5cf6','#0891b2','#2563eb','#0284c7','#60a5fa'];
@@ -221,7 +226,7 @@ const S = {
   aulas: [], geral: [], alunos: [], vistos: [], config: {...CONFIG_DEFAULT},
   tab: 'horario', sub: 'calendario', diaSel: hoje().getDay(), turmaAluno: TURMAS[0],
   filtroVisto: 'marcar', calMes: hoje().getMonth(), calAno: hoje().getFullYear(),
-  calDiaSel: chaveData(hoje()), busca: '', filtroLista: 'todos',
+  busca: '', filtroLista: 'todos', filtroGeral: 'tudo',
   turmaRel: '__all', notifSessao: new Set(),
   calDiaAtivo: chaveData(hoje())
 };
@@ -857,17 +862,33 @@ function criarAulaCardSimples(a, diaRef){
 /* ═══════ GERAL ═══════ */
 function renderGeral(main){
   pararTickContagem();
+
+  // Day tabs (mesma UX da aba Vistos)
+  const dayTabs = document.createElement('div');
+  dayTabs.className = 'day-tabs';
+  dayTabs.style.marginTop = '0';
+  dayTabs.style.padding = '0';
+  const dHojeTab = hoje().getDay();
+  ORDEM.forEach(d => {
+    const b = document.createElement('button');
+    b.className = 'day-tab' + (d===S.diaSel?' on':'') + (d===dHojeTab&&d!==S.diaSel?' today':'');
+    b.textContent = DIAS_CURTO[d];
+    b.onclick = () => { S.diaSel = d; render(); };
+    dayTabs.appendChild(b);
+  });
+  main.appendChild(dayTabs);
+
   const chips = document.createElement('div');
   chips.className = 'chips';
   [['tudo','Tudo'],['minhas','Minhas'],['outras','Outras']].forEach(([v,t]) => {
     const c = document.createElement('button');
-    c.className = 'chip' + ((window._fg||'tudo') === v ? ' on':'');
+    c.className = 'chip' + (S.filtroGeral === v ? ' on':'');
     c.textContent = t;
-    c.onclick = () => { window._fg = v; render(); };
+    c.onclick = () => { S.filtroGeral = v; render(); };
     chips.appendChild(c);
   });
   main.appendChild(chips);
-  const filtro = window._fg || 'tudo';
+  const filtro = S.filtroGeral;
 
   const aulasDia = S.aulas.filter(a => a.dia === S.diaSel).map(a => ({...a, _tipo:'aula'}));
   const geralDia = S.geral.filter(a => a.dia === S.diaSel).map(a => ({...a, _tipo:'geral'}));
@@ -900,11 +921,11 @@ function renderGeral(main){
   }
 
   const agora = horaAgora();
-  const dHoje = hoje().getDay();
+  const dHojeCalc = hoje().getDay();
   todas.forEach(a => {
     const ehMinha = a._tipo === 'aula';
     const temConflito = conflitos.has(a.id);
-    const atual = S.diaSel === dHoje && a.ini <= agora && agora < (a.fim || '23:59');
+    const atual = S.diaSel === dHojeCalc && a.ini <= agora && agora < (a.fim || '23:59');
     const escola = ESCOLA_DA_TURMA[a.turma];
     const grad = ehMinha ? (GRAD_TURMA[a.turma] || 'var(--grad-primary-cyan)') : 'linear-gradient(160deg,#94a3b8,#64748b)';
 
@@ -1434,7 +1455,16 @@ function renderVistosMarcar(main){
     btnRow.appendChild(bLimpar);
     main.appendChild(btnRow);
 
-    const lista = todosAlunos.filter(al => !busca || al.nome.toLowerCase().includes(busca));
+    let lista = todosAlunos.filter(al => !busca || al.nome.toLowerCase().includes(busca));
+
+    if(S.filtroLista === 'presente' || S.filtroLista === 'ausente' || S.filtroLista === 'justificado'){
+      lista = lista.filter(al => getStatusAluno(aula.id, dataRef, al.id) === S.filtroLista);
+    }
+    else if(S.filtroLista === 'otimo' || S.filtroLista === 'bom' ||
+            S.filtroLista === 'atencao' || S.filtroLista === 'critico'){
+      lista = lista.filter(al => al.nivel === S.filtroLista);
+    }
+
     if(!lista.length){
       const v = document.createElement('div');
       v.className = 'vazio';
@@ -1967,6 +1997,66 @@ function tick(){
   if(el) el.textContent = horaAgora().replace(':','h');
   verificarNotif();
 }
+
+/* ═══════ AUTO-HIDE DA BOTTOM NAV ═══════ */
+/* Esconde a barra ao rolar pra baixo; mostra ao rolar pra cima.
+   No fim da página, permanece oculta até o usuário rolar pra cima.
+   Sempre visível perto do topo e quando há modal aberto. */
+function instalarAutoHideNav(){
+  const nav = document.getElementById('bottom-nav');
+  if(!nav) return;
+
+  let ultimoY = window.scrollY;
+  let ticking = false;
+  const LIMIAR_BAIXO = 6;   // px pra esconder (rolando pra baixo)
+  const LIMIAR_CIMA  = 2;   // px pra mostrar (rolando pra cima) — bem sensível
+  const MOSTRAR_TOPO = 60;  // sempre mostra perto do topo
+
+  function atualizar(){
+    const y = Math.max(0, window.scrollY);
+
+    // Perto do topo: sempre visível
+    if(y < MOSTRAR_TOPO){
+      nav.classList.remove('escondida');
+      ultimoY = y;
+      ticking = false;
+      return;
+    }
+
+    const delta = y - ultimoY;
+
+    if(delta > LIMIAR_BAIXO){
+      // Rolando pra baixo — esconde (vale inclusive no fim da página)
+      nav.classList.add('escondida');
+      ultimoY = y;
+    } else if(delta < -LIMIAR_CIMA){
+      // Rolando pra cima — mostra (reage rápido)
+      nav.classList.remove('escondida');
+      ultimoY = y;
+    }
+
+    ticking = false;
+  }
+
+  window.addEventListener('scroll', () => {
+    if(!ticking){
+      window.requestAnimationFrame(atualizar);
+      ticking = true;
+    }
+  }, { passive: true });
+
+  // Sempre mostra ao abrir modal
+  const modal = document.getElementById('modal');
+  if(modal){
+    const obs = new MutationObserver(() => {
+      if(modal.classList.contains('aberto')){
+        nav.classList.remove('escondida');
+      }
+    });
+    obs.observe(modal, { attributes: true, attributeFilter: ['class'] });
+  }
+}
+
 function init(){
   carregarTudo();
   aplicarTema();
@@ -1979,6 +2069,7 @@ function init(){
       iniciarTickContagem();
     }
   });
+  instalarAutoHideNav();
 }
 if('serviceWorker' in navigator){
   window.addEventListener('load', () => {
