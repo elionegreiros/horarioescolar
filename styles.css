@@ -759,3 +759,30 @@ html[data-tema="claro"] .toast{
 .turma-manage-btn:active{transform:scale(.94)}
 .turma-manage-btn:hover{background:var(--card-2)}
 .turma-manage-btn.danger{color:var(--red)}
+/* ═══════════════════════════════════════════════════════════
+   BOTÕES DE COMPARTILHAR (imagem de aulas)
+   ═══════════════════════════════════════════════════════════ */
+.share-day-btn{
+  width:34px;height:34px;border-radius:10px;
+  border:1px solid var(--border-2);
+  background:var(--card-2);color:var(--primary);
+  display:grid;place-items:center;flex:0 0 auto;
+  cursor:pointer;padding:0;transition:transform .12s, background .15s;
+}
+.share-day-btn:hover{background:var(--primary-soft)}
+.share-day-btn:active{transform:scale(.9)}
+.share-day-btn svg{width:16px;height:16px;fill:currentColor}
+
+.share-week-btn{
+  border:1px solid var(--border);
+  background:var(--card);color:var(--primary);
+  font-family:inherit;font-size:13px;font-weight:800;
+  padding:10px 16px;border-radius:999px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:8px;
+  box-shadow:var(--shadow-sm);
+  transition:transform .12s, background .15s, box-shadow .15s;
+  letter-spacing:-.2px;
+}
+.share-week-btn:hover{background:var(--primary-soft);box-shadow:var(--shadow)}
+.share-week-btn:active{transform:scale(.96)}
+.share-week-btn svg{width:16px;height:16px;fill:currentColor}
