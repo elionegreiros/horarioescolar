@@ -2480,22 +2480,9 @@ function compartilharAluno(alunoId){
   compartilharTexto('Relatório - ' + a.nome, txt);
 }
 function compartilharDesempenho(alunoId){
-  const a = S.alunos.find(x => x.id === alunoId); if(!a) return;
-  const { score, stats } = calcScore(a);
-  const n = NIVEL_MAP[a.nivel] || NIVEL_MAP.bom;
-  const barras = [
-    ['Frequência', stats.freq], ['Trabalhos', stats.pctTrab],
-    ['Provas', stats.pctProv], ['Atividades', stats.pctAtiv],
-    ['Notas', stats.media != null ? Math.round(stats.media*10) : null]
-  ].map(([k,v]) => {
-    const blocos = v == null ? '' : '█'.repeat(Math.round(v/10)).padEnd(10, '░');
-    return `${k.padEnd(12)} ${blocos} ${v != null ? v+'%' : '—'}`;
-  }).join('\n');
-  compartilharTexto('Desempenho - ' + a.nome, [
-    `📈 *Desempenho — ${a.nome}*`, `Turma: ${a.turma}`, ``, barras, ``,
-    `Score final: ${score}/100 (${n.nome})`,
-    `— ${S.config.nomeProf || 'Professor'}`
-  ].join('\n'));
+  const a = S.alunos.find(x => x.id === alunoId);
+  if(!a){ return; }
+  abrirRelatorioMensal(alunoId);
 }
 function compartilharInfoAluno(alunoId){
   const a = S.alunos.find(x => x.id === alunoId); if(!a) return;
@@ -3174,6 +3161,649 @@ function instalarAutoHideNav(){
   }
 }
 
+/* ═══════════════════════════════════════════════════════════
+   RELATÓRIO MENSAL DO ALUNO — imagem + texto
+   ═══════════════════════════════════════════════════════════ */
+function coletarDadosRelatorioMensal(aluno){
+  // Pega todos os vistos desse aluno
+  const chamadas = S.vistos
+    .filter(v => v.turma === aluno.turma)
+    .filter(v => (v.status && v.status[aluno.id]) || (v.registros && v.registros[aluno.id]))
+    .sort((a, b) => b.data.localeCompare(a.data));
+
+  // Agrupa por mês (YYYY-MM)
+  const porMes = {};
+  chamadas.forEach(v => {
+    const ym = v.data.slice(0, 7); // "2026-10"
+    if(!porMes[ym]) porMes[ym] = [];
+    porMes[ym].push(v);
+  });
+
+  // Constrói array de meses (do mais recente pro mais antigo)
+  const meses = Object.keys(porMes).sort().reverse().map(ym => {
+    const [y, m] = ym.split('-').map(Number);
+    const chamadasMes = porMes[ym];
+
+    // Stats do mês
+    let pres = 0, aus = 0, jus = 0;
+    let trabFeitos = 0, trabTot = 0;
+    let provFeitas = 0, provTot = 0;
+    let ativFeitas = 0, ativTot = 0;
+    const notasMes = [];
+
+    const aulas = chamadasMes.map(v => {
+      const st = v.status && v.status[aluno.id];
+      const reg = (v.registros && v.registros[aluno.id]) || {};
+      if(st === 'presente') pres++;
+      else if(st === 'ausente') aus++;
+      else if(st === 'justificado') jus++;
+      if(reg.trabalho != null){ trabTot++; if(reg.trabalho) trabFeitos++; }
+      if(reg.prova != null){ provTot++; if(reg.prova) provFeitas++; }
+      if(reg.atividade != null){ ativTot++; if(reg.atividade) ativFeitas++; }
+      if(reg.nota != null && !isNaN(reg.nota)) notasMes.push(Number(reg.nota));
+
+      // Descobre a matéria daquela aula
+      const aulaObj = S.aulas.find(au => au.id === v.aulaId);
+      return {
+        data: v.data,
+        ini: aulaObj ? aulaObj.ini : '',
+        materia: aulaObj ? (aulaObj.materia || 'Aula') : 'Aula',
+        status: st || 'pendente',
+        registros: reg
+      };
+    });
+
+    const freqMes = (pres + aus + jus) ? Math.round(pres / (pres + aus + jus) * 100) : null;
+    const mediaMes = notasMes.length ? (notasMes.reduce((a,b)=>a+b,0) / notasMes.length) : null;
+
+    return {
+      ym, ano: y, mes: m,
+      nomeMes: MESES[m-1] + '/' + y,
+      aulas,
+      pres, aus, jus,
+      freq: freqMes,
+      trabFeitos, trabTot,
+      provFeitas, provTot,
+      ativFeitas, ativTot,
+      notas: notasMes,
+      media: mediaMes,
+      totalAulas: chamadasMes.length
+    };
+  });
+
+  // Stats gerais (todas as chamadas)
+  let tPres = 0, tAus = 0, tJus = 0;
+  let tTrabF = 0, tTrabT = 0;
+  let tProvF = 0, tProvT = 0;
+  let tAtivF = 0, tAtivT = 0;
+  const todasNotas = [];
+  chamadas.forEach(v => {
+    const st = v.status && v.status[aluno.id];
+    const reg = (v.registros && v.registros[aluno.id]) || {};
+    if(st === 'presente') tPres++;
+    else if(st === 'ausente') tAus++;
+    else if(st === 'justificado') tJus++;
+    if(reg.trabalho != null){ tTrabT++; if(reg.trabalho) tTrabF++; }
+    if(reg.prova != null){ tProvT++; if(reg.prova) tProvF++; }
+    if(reg.atividade != null){ tAtivT++; if(reg.atividade) tAtivF++; }
+    if(reg.nota != null && !isNaN(reg.nota)) todasNotas.push(Number(reg.nota));
+  });
+
+  const { score } = calcScore(aluno);
+  const freqGeral = (tPres + tAus + tJus) ? Math.round(tPres / (tPres + tAus + tJus) * 100) : null;
+  const mediaGeral = todasNotas.length ? (todasNotas.reduce((a,b)=>a+b,0) / todasNotas.length) : null;
+
+  return {
+    aluno,
+    score,
+    meses,
+    geral: {
+      pres: tPres, aus: tAus, jus: tJus,
+      freq: freqGeral,
+      trabFeitos: tTrabF, trabTot: tTrabT,
+      provFeitas: tProvF, provTot: tProvT,
+      ativFeitas: tAtivF, ativTot: tAtivT,
+      notas: todasNotas,
+      media: mediaGeral,
+      totalChamadas: chamadas.length
+    }
+  };
+}
+
+/* ─────── GERAR IMAGEM DO RELATÓRIO MENSAL ─────── */
+function gerarImagemRelatorioMensal(dados){
+  const { aluno, score, meses, geral } = dados;
+  const W = 1080;
+  const padding = 56;
+  const cardW = W - padding * 2;
+  const headerH = 380;
+
+  // Calcula altura: sumário + cada mês + observações
+  const sumarioH = 200;
+  const mesHeaderH = 90;
+  const aulaRowH = 96;
+  const aulaRowGap = 10;
+  const mesResumoH = 70;
+  const mesGap = 40;
+  const obsHeaderH = 70;
+  const obsItemH = 90;
+  const footerH = 100;
+
+  let alturaMeses = 0;
+  meses.forEach(m => {
+    alturaMeses += mesHeaderH + m.aulas.length * (aulaRowH + aulaRowGap) - aulaRowGap + mesResumoH + mesGap;
+  });
+
+  const obs = (aluno.observacoes || []).sort((x, y) => (y.data || '').localeCompare(x.data || ''));
+  const obsAltura = obs.length ? (obsHeaderH + obs.length * (obsItemH + 8)) : 0;
+
+  const startY = headerH + 30;
+  const H = startY + sumarioH + 40 + alturaMeses + obsAltura + footerH;
+
+  const canvas = document.createElement('canvas');
+  const scale = 2;
+  canvas.width = W * scale;
+  canvas.height = H * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+
+  // Fundo
+  ctx.fillStyle = '#f4f4f8';
+  ctx.fillRect(0, 0, W, H);
+
+  // Header
+  const grad = ctx.createLinearGradient(0, 0, W, headerH);
+  grad.addColorStop(0, '#4f46e5');
+  grad.addColorStop(0.5, '#6366f1');
+  grad.addColorStop(1, '#8b5cf6');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, headerH);
+
+  ctx.globalAlpha = 0.08;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(W - 100, 60, 220, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(80, headerH - 40, 160, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.globalAlpha = 0.85;
+  ctx.fillText('RELATÓRIO DO ALUNO', W / 2, 60);
+  ctx.globalAlpha = 1;
+
+  // Nome (com quebra se necessário)
+  ctx.font = 'bold 54px -apple-system, BlinkMacSystemFont, sans-serif';
+  const nomeLinhas = quebrarTexto(ctx, aluno.nome, W - padding * 2);
+  nomeLinhas.slice(0, 2).forEach((linha, i) => {
+    ctx.fillText(linha, W / 2, 130 + i * 60);
+  });
+
+  // Turma
+  ctx.globalAlpha = 0.9;
+  ctx.font = '500 32px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(aluno.turma, W / 2, 270);
+  ctx.globalAlpha = 1;
+
+  // Score grande
+  ctx.font = 'bold 60px -apple-system, BlinkMacSystemFont, sans-serif';
+  const scoreY = 330;
+  ctx.fillText(`${score}`, W / 2 - 40, scoreY);
+  ctx.font = '500 28px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.globalAlpha = 0.85;
+  ctx.fillText('/100', W / 2 + 30, scoreY + 8);
+  ctx.globalAlpha = 1;
+
+  let y = startY;
+
+  // ─── Sumário geral ───
+  ctx.fillStyle = '#fff';
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.08)';
+  ctx.shadowBlur = 20;
+  ctx.shadowOffsetY = 4;
+  drawRoundedRect(ctx, padding, y, cardW, sumarioH - 20, 24);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const metricas = [
+    { lbl: 'FREQUÊNCIA', val: geral.freq != null ? geral.freq + '%' : '—', cor: '#10b981' },
+    { lbl: 'MÉDIA', val: geral.media != null ? geral.media.toFixed(2) : '—', cor: '#2563eb' },
+    { lbl: 'TRABALHOS', val: geral.trabTot ? Math.round(geral.trabFeitos/geral.trabTot*100) + '%' : '—', cor: '#6366f1' },
+    { lbl: 'PROVAS', val: geral.provTot ? Math.round(geral.provFeitas/geral.provTot*100) + '%' : '—', cor: '#8b5cf6' }
+  ];
+  const colW = (cardW - 40) / 4;
+  metricas.forEach((m, i) => {
+    const cx = padding + 20 + colW * i + colW / 2;
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(m.lbl, cx, y + 45);
+    ctx.fillStyle = m.cor;
+    ctx.font = 'bold 48px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(m.val, cx, y + 105);
+  });
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
+  const txtAus = `Presenças: ${geral.pres} · Faltas: ${geral.aus} · Justificadas: ${geral.jus}`;
+  ctx.fillText(txtAus, W / 2, y + sumarioH - 45);
+
+  y += sumarioH + 20;
+
+  // ─── Meses ───
+  if(!meses.length){
+    ctx.fillStyle = '#fff';
+    drawRoundedRect(ctx, padding, y, cardW, 120, 24);
+    ctx.fill();
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 28px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Nenhum registro de chamada ainda', W / 2, y + 60);
+    y += 120;
+  } else {
+    meses.forEach((mes, idxMes) => {
+      // Header do mês
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      ctx.fillStyle = '#0a1428';
+      ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(mes.nomeMes, padding, y + 40);
+
+      // Badge de frequência à direita
+      ctx.textAlign = 'right';
+      if(mes.freq != null){
+        const corFreq = mes.freq >= 90 ? '#10b981' : mes.freq >= 75 ? '#f59e0b' : '#ef4444';
+        ctx.fillStyle = corFreq;
+        ctx.font = 'bold 34px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText(`${mes.freq}%`, W - padding, y + 40);
+      }
+
+      // Linha divisória
+      ctx.strokeStyle = 'rgba(10, 20, 40, 0.08)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(padding, y + mesHeaderH - 20);
+      ctx.lineTo(W - padding, y + mesHeaderH - 20);
+      ctx.stroke();
+
+      y += mesHeaderH;
+
+      // Aulas do mês
+      mes.aulas.forEach(aula => {
+        const stInfo = STATUS_ATA[aula.status];
+
+        // Card da aula
+        ctx.fillStyle = '#fff';
+        ctx.shadowColor = 'rgba(15, 23, 42, 0.05)';
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 2;
+        drawRoundedRect(ctx, padding, y, cardW, aulaRowH, 16);
+        ctx.fill();
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+
+        // Barra lateral
+        ctx.fillStyle = stInfo.cor;
+        drawRoundedRectLeft(ctx, padding, y, 6, aulaRowH, 16);
+        ctx.fill();
+
+        // Emoji status
+        ctx.font = '32px -apple-system, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(stInfo.emoji, padding + 45, y + aulaRowH/2);
+
+        // Data + horário
+        const [yy, mm, dd] = aula.data.split('-').map(Number);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#0a1428';
+        ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText(`${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}`, padding + 90, y + 34);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText(aula.ini, padding + 90, y + 66);
+
+        // Matéria
+        ctx.fillStyle = '#3d4d6b';
+        ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, sans-serif';
+        let materiaTxt = aula.materia;
+        const maxMatW = cardW - 200;
+        while(ctx.measureText(materiaTxt).width > maxMatW && materiaTxt.length > 10){
+          materiaTxt = materiaTxt.slice(0, -2);
+        }
+        if(materiaTxt !== aula.materia) materiaTxt = materiaTxt.slice(0, -1) + '…';
+        ctx.fillText(materiaTxt, padding + 220, y + 34);
+
+        // Status texto
+        ctx.fillStyle = stInfo.cor;
+        ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText(stInfo.label, padding + 220, y + 66);
+
+        // Badges à direita (TRAB, PROV, ATIV, Nota)
+        const badges = [];
+        if(aula.registros.trabalho) badges.push({ txt: 'TRAB', cor: '#6366f1' });
+        if(aula.registros.prova) badges.push({ txt: 'PROV', cor: '#8b5cf6' });
+        if(aula.registros.atividade) badges.push({ txt: 'ATIV', cor: '#2563eb' });
+        if(aula.registros.nota != null) badges.push({ txt: 'Nota ' + aula.registros.nota, cor: '#10b981' });
+
+        if(badges.length){
+          let bx = W - padding - 16;
+          ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
+          ctx.textAlign = 'center';
+          for(let i = badges.length - 1; i >= 0; i--){
+            const b = badges[i];
+            const tw = ctx.measureText(b.txt).width + 20;
+            bx -= tw;
+            ctx.fillStyle = b.cor;
+            ctx.globalAlpha = 0.15;
+            drawRoundedRect(ctx, bx, y + aulaRowH/2 - 15, tw, 30, 15);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = b.cor;
+            ctx.fillText(b.txt, bx + tw/2, y + aulaRowH/2 + 1);
+            bx -= 6;
+          }
+          ctx.textAlign = 'left';
+        }
+
+        y += aulaRowH + aulaRowGap;
+      });
+
+      // Resumo do mês
+      y += 4;
+      ctx.fillStyle = '#f7faff';
+      drawRoundedRect(ctx, padding, y, cardW, mesResumoH - 12, 14);
+      ctx.fill();
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#7d8ba8';
+      ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+
+      const partes = [];
+      partes.push(`${mes.totalAulas} aula${mes.totalAulas === 1 ? '' : 's'}`);
+      if(mes.freq != null) partes.push(`Freq ${mes.freq}%`);
+      if(mes.trabTot) partes.push(`Trab ${mes.trabFeitos}/${mes.trabTot}`);
+      if(mes.provTot) partes.push(`Prov ${mes.provFeitas}/${mes.provTot}`);
+      if(mes.ativTot) partes.push(`Ativ ${mes.ativFeitas}/${mes.ativTot}`);
+      if(mes.media != null) partes.push(`Média ${mes.media.toFixed(2)}`);
+
+      ctx.fillText(partes.join('  ·  '), W / 2, y + (mesResumoH - 12)/2);
+
+      y += mesResumoH + mesGap;
+    });
+  }
+
+  // ─── Observações ───
+  if(obs.length){
+    y += 10;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#0a1428';
+    ctx.font = 'bold 36px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('Observações', padding, y + 30);
+
+    ctx.strokeStyle = 'rgba(10, 20, 40, 0.08)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(padding, y + obsHeaderH - 20);
+    ctx.lineTo(W - padding, y + obsHeaderH - 20);
+    ctx.stroke();
+
+    y += obsHeaderH;
+
+    obs.slice(0, 12).forEach(o => {
+      // Card
+      ctx.fillStyle = '#fff';
+      ctx.shadowColor = 'rgba(15, 23, 42, 0.04)';
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetY = 2;
+      drawRoundedRect(ctx, padding, y, cardW, obsItemH, 14);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+
+      const corTipo = o.tipo === 'positivo' ? '#10b981'
+        : o.tipo === 'negativo' ? '#ef4444'
+        : o.tipo === 'pedagogico' ? '#06b6d4'
+        : '#7d8ba8';
+
+      ctx.fillStyle = corTipo;
+      drawRoundedRectLeft(ctx, padding, y, 5, obsItemH, 14);
+      ctx.fill();
+
+      // Data
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+      const [oy, om, od] = o.data.split('-').map(Number);
+      ctx.fillText(`${String(od).padStart(2,'0')}/${String(om).padStart(2,'0')}/${oy}`, padding + 22, y + 26);
+
+      // Tipo (badge)
+      const tipoLabel = o.tipo === 'positivo' ? 'Positivo'
+        : o.tipo === 'negativo' ? 'Negativo'
+        : o.tipo === 'pedagogico' ? 'Pedagógico'
+        : 'Neutro';
+      ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
+      const tw = ctx.measureText(tipoLabel).width + 20;
+      ctx.fillStyle = corTipo;
+      ctx.globalAlpha = 0.15;
+      drawRoundedRect(ctx, padding + 22 + 90, y + 14, tw, 26, 13);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = corTipo;
+      ctx.textAlign = 'center';
+      ctx.fillText(tipoLabel, padding + 22 + 90 + tw/2, y + 27);
+      ctx.textAlign = 'left';
+
+      // Texto da observação (com quebra)
+      ctx.fillStyle = '#0a1428';
+      ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
+      const maxTxtW = cardW - 44;
+      const linhas = quebrarTexto(ctx, o.texto, maxTxtW);
+      linhas.slice(0, 2).forEach((linha, li) => {
+        ctx.fillText(linha, padding + 22, y + 60 + li * 26);
+      });
+      if(linhas.length > 2){
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = 'italic 16px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText('(continua...)', padding + 22, y + 60 + 52);
+      }
+
+      y += obsItemH + 8;
+    });
+
+    if(obs.length > 12){
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'italic 18px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`+ ${obs.length - 12} observações mais antigas`, W / 2, y + 20);
+      y += 40;
+    }
+  }
+
+  // Footer
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '500 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const h = new Date();
+  ctx.fillText(`Gerado em ${String(h.getDate()).padStart(2,'0')}/${String(h.getMonth()+1).padStart(2,'0')}/${h.getFullYear()} · horarioescola.netlify.app`, W / 2, H - 44);
+
+  return canvas;
+}
+
+/* ─────── GERAR TEXTO DO RELATÓRIO MENSAL ─────── */
+function gerarTextoRelatorioMensal(dados){
+  const { aluno, score, meses, geral } = dados;
+  const n = NIVEL_MAP[aluno.nivel] || NIVEL_MAP.bom;
+
+  const linhas = [];
+  linhas.push(`📊 *RELATÓRIO DO ALUNO*`);
+  linhas.push(`👤 *${aluno.nome}*`);
+  linhas.push(`🏫 Turma: ${aluno.turma}`);
+  linhas.push(`⭐ Desempenho: ${n.nome}  ·  Score: *${score}/100*`);
+  linhas.push(``);
+  linhas.push(`━━━━━━━━━━━━━━━━━`);
+  linhas.push(`*RESUMO GERAL*`);
+  if(geral.freq != null) linhas.push(`📅 Frequência: *${geral.freq}%*  (${geral.pres}P · ${geral.aus}A · ${geral.jus}J)`);
+  if(geral.media != null) linhas.push(`📝 Média de notas: *${geral.media.toFixed(2)}* (${geral.notas.length} aval.)`);
+  if(geral.trabTot) linhas.push(`📚 Trabalhos: *${geral.trabFeitos}/${geral.trabTot}* (${Math.round(geral.trabFeitos/geral.trabTot*100)}%)`);
+  if(geral.provTot) linhas.push(`✏️ Provas: *${geral.provFeitas}/${geral.provTot}* (${Math.round(geral.provFeitas/geral.provTot*100)}%)`);
+  if(geral.ativTot) linhas.push(`✅ Atividades: *${geral.ativFeitas}/${geral.ativTot}* (${Math.round(geral.ativFeitas/geral.ativTot*100)}%)`);
+
+  if(!meses.length){
+    linhas.push(``);
+    linhas.push(`_Nenhum registro de chamada ainda._`);
+  } else {
+    meses.forEach(mes => {
+      linhas.push(``);
+      linhas.push(`━━━━━━━━━━━━━━━━━`);
+      linhas.push(`📅 *${mes.nomeMes.toUpperCase()}*`);
+      const sub = [];
+      if(mes.freq != null) sub.push(`Freq ${mes.freq}%`);
+      if(mes.trabTot) sub.push(`Trab ${mes.trabFeitos}/${mes.trabTot}`);
+      if(mes.provTot) sub.push(`Prov ${mes.provFeitas}/${mes.provTot}`);
+      if(mes.ativTot) sub.push(`Ativ ${mes.ativFeitas}/${mes.ativTot}`);
+      if(mes.media != null) sub.push(`Média ${mes.media.toFixed(2)}`);
+      linhas.push(`_${sub.join(' · ')}_`);
+      linhas.push(``);
+
+      mes.aulas.forEach(aula => {
+        const stInfo = STATUS_ATA[aula.status];
+        const [yy, mm, dd] = aula.data.split('-').map(Number);
+        const dia = `${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}`;
+        const badges = [];
+        if(aula.registros.trabalho) badges.push('TRAB');
+        if(aula.registros.prova) badges.push('PROV');
+        if(aula.registros.atividade) badges.push('ATIV');
+        if(aula.registros.nota != null) badges.push(`Nota ${aula.registros.nota}`);
+
+        const sufixo = badges.length ? `  _[${badges.join(', ')}]_` : '';
+        linhas.push(`${stInfo.emoji} *${dia}* ${aula.ini} · ${aula.materia}${sufixo}`);
+      });
+    });
+  }
+
+  const obs = (aluno.observacoes || []).sort((x, y) => (y.data || '').localeCompare(x.data || ''));
+  if(obs.length){
+    linhas.push(``);
+    linhas.push(`━━━━━━━━━━━━━━━━━`);
+    linhas.push(`📝 *OBSERVAÇÕES*`);
+    linhas.push(``);
+    obs.slice(0, 15).forEach(o => {
+      const [oy, om, od] = o.data.split('-').map(Number);
+      const tipo = o.tipo === 'positivo' ? '🟢 Positivo'
+        : o.tipo === 'negativo' ? '🔴 Negativo'
+        : o.tipo === 'pedagogico' ? '🔵 Pedagógico'
+        : '⚪ Neutro';
+      linhas.push(`*${String(od).padStart(2,'0')}/${String(om).padStart(2,'0')}/${oy}* · ${tipo}`);
+      linhas.push(`_${o.texto}_`);
+      linhas.push(``);
+    });
+    if(obs.length > 15){
+      linhas.push(`_+ ${obs.length - 15} observações mais antigas_`);
+    }
+  }
+
+  linhas.push(``);
+  linhas.push(`━━━━━━━━━━━━━━━━━`);
+  linhas.push(`— ${S.config.nomeProf || 'Professor'}`);
+
+  return linhas.join('\n');
+}
+
+/* ─────── MODAL: opções de relatório ─────── */
+function abrirRelatorioMensal(alunoId){
+  const aluno = S.alunos.find(x => x.id === alunoId);
+  if(!aluno){ toast('Aluno não encontrado'); return; }
+
+  const dados = coletarDadosRelatorioMensal(aluno);
+  const { score, meses, geral } = dados;
+  const n = NIVEL_MAP[aluno.nivel] || NIVEL_MAP.bom;
+
+  // Prévia rápida
+  const resumo = [
+    `Score ${score}/100 · ${n.nome}`,
+    geral.freq != null ? `Freq ${geral.freq}%` : null,
+    geral.media != null ? `Média ${geral.media.toFixed(2)}` : null,
+    `${meses.length} mês${meses.length === 1 ? '' : 'es'} com registros`
+  ].filter(Boolean).join('  ·  ');
+
+  abrirModal(`
+    <h2>Relatório do aluno</h2>
+    <div class="perfil-head" style="margin-bottom:16px">
+      <div class="avatar" style="background:linear-gradient(135deg,${corDe(aluno.nome)},${corDe(aluno.nome)}cc);width:56px;height:56px;flex:0 0 56px;font-size:20px">${iniciais(aluno.nome)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="nome" style="font-size:16px">${esc(aluno.nome)}</div>
+        <div class="turma">${esc(aluno.turma)}</div>
+      </div>
+    </div>
+
+    <div style="background:var(--card-2);border-radius:14px;padding:14px;margin-bottom:16px;font-size:13px;color:var(--text-2);font-weight:600;line-height:1.5">
+      ${ico('i-chart','ico-14')} ${esc(resumo)}
+    </div>
+
+    <div style="font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:10px">
+      ${ico('i-share','ico-14')} Compartilhar relatório
+    </div>
+
+    <button class="share-btn" id="rel-img" style="margin-bottom:10px">
+      ${ico('i-chart','ico-20')}
+      <div style="text-align:left;flex:1">
+        <div>Relatório completo em imagem</div>
+        <small style="display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:3px">
+          PNG · Todos os meses, aulas, notas e observações
+        </small>
+      </div>
+    </button>
+
+    <button class="share-btn" id="rel-txt">
+      ${ico('i-note','ico-20')}
+      <div style="text-align:left;flex:1">
+        <div>Relatório completo em texto</div>
+        <small style="display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:3px">
+          Formato WhatsApp · Ideal para colar em conversa
+        </small>
+      </div>
+    </button>
+
+    <div class="botoes-f">
+      <button class="btn-f secundario" id="btn-fechar">Cancelar</button>
+    </div>
+  `);
+
+  $('#btn-fechar').onclick = fecharModal;
+
+  $('#rel-img').onclick = async () => {
+    fecharModal();
+    toast('Gerando relatório...');
+    try{
+      const canvas = gerarImagemRelatorioMensal(dados);
+      const nome = `relatorio-${aluno.nome.toLowerCase().replace(/\s+/g,'-').slice(0,30)}.png`;
+      await compartilharAtaImagem(canvas, nome, 'Relatório — ' + aluno.nome);
+    }catch(e){
+      console.error(e);
+      toast('Erro ao gerar relatório');
+    }
+  };
+
+  $('#rel-txt').onclick = async () => {
+    fecharModal();
+    const texto = gerarTextoRelatorioMensal(dados);
+    await compartilharTexto('Relatório — ' + aluno.nome, texto);
+  };
+}
 function init(){
   carregarTudo();
   aplicarTema();
