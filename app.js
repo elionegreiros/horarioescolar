@@ -193,7 +193,11 @@ const RENOMEAR = {
 };
 
 const K = { aulas:'h4.aulas', geral:'h4.geral', alunos:'h4.alunos',
-  vistos:'h4.vistos', config:'h4.config' };
+  vistos:'h4.vistos', config:'h4.config',
+  notasTrim:'h4.notasTrim', agenda:'h4.agenda' };
+
+/* Mude para [1,2,3,4] se sua escola usa BIMESTRES em vez de TRIMESTRES */
+const TRIMESTRES = [1, 2, 3];
 
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
@@ -227,13 +231,17 @@ const gravar = (k,v) => localStorage.setItem(k, JSON.stringify(v));
 
 const S = {
   aulas: [], geral: [], alunos: [], vistos: [], config: {...CONFIG_DEFAULT},
+  notasTrim: [], agenda: [],
   tab: 'horario', sub: 'calendario', diaSel: hoje().getDay(), turmaAluno: TURMAS[0],
   calMes: hoje().getMonth(), calAno: hoje().getFullYear(),
   busca: '', filtroLista: 'todos', filtroGeral: 'tudo',
   notifSessao: new Set(),
   calDiaAtivo: chaveData(hoje()),
   subAlunos: 'chamada',
-  aulaChamadaId: null
+  aulaChamadaId: null,
+  filtroNotasDisciplina: '__all',
+  filtroNotasTrimestre: 1,
+  filtroAgendaTurma: '__all'
 };
 
 function aplicarConfiguracoesTurmas(){
@@ -321,6 +329,8 @@ function carregarTudo(){
     localStorage.setItem('h5.seedVer', SEED_VER);
   }
   S.vistos = (ler(K.vistos) || []).map(migrarVisto);
+  S.notasTrim = ler(K.notasTrim) || [];
+  S.agenda = ler(K.agenda) || [];
   S.config = {...CONFIG_DEFAULT, ...(ler(K.config)||{})};
   migrarNomes(S.aulas); migrarNomes(S.geral);
   aplicarConfiguracoesTurmas();
@@ -329,6 +339,7 @@ function carregarTudo(){
 function salvarTudo(){
   gravar(K.aulas, S.aulas); gravar(K.geral, S.geral);
   gravar(K.alunos, S.alunos); gravar(K.vistos, S.vistos);
+  gravar(K.notasTrim, S.notasTrim); gravar(K.agenda, S.agenda);
   gravar(K.config, S.config);
 }
 
@@ -490,9 +501,6 @@ function formatarContagem(seg){
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   IMAGEM DE AULAS (COMPARTILHAR)
-   ═══════════════════════════════════════════════════════════ */
 function drawRoundedRect(ctx, x, y, w, h, r){
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -530,6 +538,323 @@ function quebrarTexto(ctx, texto, maxWidth){
   return linhas;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   NOTAS TRIMESTRAIS
+   ═══════════════════════════════════════════════════════════ */
+function getDisciplinasDaTurma(turma){
+  const disciplinas = new Set();
+  S.aulas.forEach(a => {
+    if(a.turma === turma && a.materia) disciplinas.add(a.materia);
+  });
+  return [...disciplinas].sort();
+}
+
+function getNotaTrim(alunoId, disciplina, trimestre){
+  return S.notasTrim.find(x =>
+    x.alunoId === alunoId &&
+    x.disciplina === disciplina &&
+    x.trimestre === trimestre
+  ) || null;
+}
+
+function setNotaTrim(alunoId, turma, disciplina, trimestre, campos){
+  let n = S.notasTrim.find(x =>
+    x.alunoId === alunoId &&
+    x.disciplina === disciplina &&
+    x.trimestre === trimestre
+  );
+  if(!n){
+    const temAlgo = campos && (campos.nota != null || campos.faltas != null || (campos.obs && campos.obs.length));
+    if(!temAlgo) return;
+    n = { id: uid(), alunoId, turma, disciplina, trimestre, nota: null, faltas: null, obs: '' };
+    S.notasTrim.push(n);
+  }
+  Object.assign(n, campos);
+  gravar(K.notasTrim, S.notasTrim);
+}
+
+function calcMediaTrims(alunoId, disciplina){
+  const valores = TRIMESTRES
+    .map(t => getNotaTrim(alunoId, disciplina, t))
+    .filter(n => n && n.nota != null)
+    .map(n => n.nota);
+  if(!valores.length) return null;
+  return valores.reduce((a,b)=>a+b,0) / valores.length;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   AGENDA / DIÁRIO
+   ═══════════════════════════════════════════════════════════ */
+function addAgenda(data, turma, disciplina, conteudo, tarefa, obs){
+  if(!conteudo && !tarefa && !obs) return;
+  const item = {
+    id: uid(), data, turma,
+    disciplina: disciplina || '',
+    conteudo: conteudo || '',
+    tarefa: tarefa || '',
+    obs: obs || '',
+    criadoEm: new Date().toISOString()
+  };
+  S.agenda.push(item);
+  gravar(K.agenda, S.agenda);
+  return item;
+}
+
+function removeAgenda(id){
+  S.agenda = S.agenda.filter(x => x.id !== id);
+  gravar(K.agenda, S.agenda);
+}
+
+function renderNotas(main){
+  const turma = S.turmaAluno;
+  const alunos = S.alunos.filter(a => a.turma === turma).sort((a,b) => a.nome.localeCompare(b.nome));
+  if(!alunos.length){
+    const v = document.createElement('div'); v.className = 'vazio';
+    v.innerHTML = `${ico('i-users','ico')}Nenhum aluno nesta turma.`;
+    main.appendChild(v); return;
+  }
+  const disciplinas = getDisciplinasDaTurma(turma);
+  if(!disciplinas.length){
+    const v = document.createElement('div'); v.className = 'vazio';
+    v.innerHTML = `${ico('i-book','ico')}Nenhuma disciplina cadastrada.<br>Adicione aulas ao horário primeiro.`;
+    main.appendChild(v); return;
+  }
+  if(!S.filtroNotasDisciplina || S.filtroNotasDisciplina === '__all' || !disciplinas.includes(S.filtroNotasDisciplina)){
+    S.filtroNotasDisciplina = disciplinas[0];
+  }
+
+  const chipsDisc = document.createElement('div');
+  chipsDisc.className = 'chips'; chipsDisc.style.marginTop = '8px';
+  disciplinas.forEach(d => {
+    const c = document.createElement('button');
+    c.className = 'chip' + (S.filtroNotasDisciplina === d ? ' on' : '');
+    c.textContent = d;
+    c.onclick = () => { S.filtroNotasDisciplina = d; render(); };
+    chipsDisc.appendChild(c);
+  });
+  main.appendChild(chipsDisc);
+
+  const chipsTrim = document.createElement('div');
+  chipsTrim.className = 'chips'; chipsTrim.style.marginTop = '8px';
+  TRIMESTRES.forEach(t => {
+    const c = document.createElement('button');
+    c.className = 'chip' + (S.filtroNotasTrimestre === t ? ' on' : '');
+    c.textContent = `${t}º Trimestre`;
+    c.onclick = () => { S.filtroNotasTrimestre = t; render(); };
+    chipsTrim.appendChild(c);
+  });
+  main.appendChild(chipsTrim);
+
+  const notasValidas = alunos
+    .map(a => getNotaTrim(a.id, S.filtroNotasDisciplina, S.filtroNotasTrimestre))
+    .filter(n => n && n.nota != null)
+    .map(n => n.nota);
+  const mediaTurma = notasValidas.length
+    ? (notasValidas.reduce((a,b)=>a+b,0) / notasValidas.length)
+    : null;
+
+  const sumCard = document.createElement('div');
+  sumCard.className = 'card';
+  sumCard.style.cssText = 'display:flex;justify-content:space-around;text-align:center;padding:14px;margin-top:10px';
+  sumCard.innerHTML = `
+    <div>
+      <div style="font-size:10.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted)">Alunos</div>
+      <div style="font-size:24px;font-weight:800;color:var(--primary);margin-top:4px">${alunos.length}</div>
+    </div>
+    <div>
+      <div style="font-size:10.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted)">Com nota</div>
+      <div style="font-size:24px;font-weight:800;color:var(--green);margin-top:4px">${notasValidas.length}</div>
+    </div>
+    <div>
+      <div style="font-size:10.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted)">Média</div>
+      <div style="font-size:24px;font-weight:800;color:${mediaTurma != null ? (mediaTurma >= 6 ? 'var(--green)' : 'var(--red)') : 'var(--muted)'};margin-top:4px">${mediaTurma != null ? mediaTurma.toFixed(2) : '—'}</div>
+    </div>`;
+  main.appendChild(sumCard);
+
+  alunos.forEach(al => {
+    const nota = getNotaTrim(al.id, S.filtroNotasDisciplina, S.filtroNotasTrimestre) || {};
+    const row = document.createElement('div');
+    row.className = 'nota-trim-row';
+    row.innerHTML = `
+      <div class="avatar" style="background:linear-gradient(135deg,${corDe(al.nome)},${corDe(al.nome)}cc);width:38px;height:38px;flex:0 0 38px;font-size:13px">${iniciais(al.nome)}</div>
+      <div class="nota-trim-info">
+        <div class="nota-trim-nome">${esc(al.nome)}</div>
+        <input class="nota-trim-nota" type="number" step="0.1" min="0" max="10" placeholder="Nota" value="${nota.nota != null ? nota.nota : ''}">
+      </div>
+      <input class="nota-trim-faltas" type="number" min="0" placeholder="Faltas" value="${nota.faltas != null ? nota.faltas : ''}">
+      <button class="nota-trim-obs-btn${nota.obs ? ' on' : ''}" title="Observação">${ico('i-note','ico-16')}</button>`;
+
+    const inputNota = row.querySelector('.nota-trim-nota');
+    const inputFaltas = row.querySelector('.nota-trim-faltas');
+    const btnObs = row.querySelector('.nota-trim-obs-btn');
+
+    inputNota.onchange = () => {
+      const v = parseFloat(inputNota.value);
+      setNotaTrim(al.id, turma, S.filtroNotasDisciplina, S.filtroNotasTrimestre, {
+        nota: isNaN(v) ? null : Math.max(0, Math.min(10, v))
+      });
+      if(navigator.vibrate) navigator.vibrate(12);
+      toast('Nota salva');
+      render();
+    };
+    inputFaltas.onchange = () => {
+      const v = parseInt(inputFaltas.value);
+      setNotaTrim(al.id, turma, S.filtroNotasDisciplina, S.filtroNotasTrimestre, {
+        faltas: isNaN(v) ? null : Math.max(0, v)
+      });
+      toast('Faltas salvas');
+    };
+    btnObs.onclick = () => abrirObsNotaTrim(al.id, turma, S.filtroNotasDisciplina, S.filtroNotasTrimestre);
+    main.appendChild(row);
+  });
+}
+
+function abrirObsNotaTrim(alunoId, turma, disciplina, trimestre){
+  const aluno = S.alunos.find(a => a.id === alunoId);
+  if(!aluno) return;
+  const nota = getNotaTrim(alunoId, disciplina, trimestre) || {};
+  abrirModal(`
+    <h2>Observação · ${trimestre}º Trim.</h2>
+    <div style="font-size:14px;color:var(--text-2);font-weight:600;margin:-8px 0 16px">
+      ${esc(aluno.nome)} · ${esc(disciplina)}
+    </div>
+    <label class="f">Observação
+      <textarea class="f" id="obs-nota-trim" maxlength="500" placeholder="Ex: Recuperação em novembro. Faltou nas últimas 2 provas.">${esc(nota.obs || '')}</textarea>
+    </label>
+    <div class="botoes-f">
+      <button class="btn-f secundario" id="btn-cancelar">Cancelar</button>
+      <button class="btn-f primario" id="btn-salvar">${ico('i-check','ico-18')} Salvar</button>
+    </div>`);
+  setTimeout(() => $('#obs-nota-trim')?.focus(), 100);
+  $('#btn-cancelar').onclick = () => { fecharModal(); };
+  $('#btn-salvar').onclick = () => {
+    const txt = $('#obs-nota-trim').value.trim();
+    setNotaTrim(alunoId, turma, disciplina, trimestre, { obs: txt });
+    fecharModal(); render(); toast('Observação salva');
+  };
+}
+
+function renderAgenda(main){
+  const chips = document.createElement('div');
+  chips.className = 'chips'; chips.style.marginTop = '8px';
+
+  const cAll = document.createElement('button');
+  cAll.className = 'chip' + (S.filtroAgendaTurma === '__all' ? ' on' : '');
+  cAll.textContent = 'Todas';
+  cAll.onclick = () => { S.filtroAgendaTurma = '__all'; render(); };
+  chips.appendChild(cAll);
+
+  TURMAS.forEach(t => {
+    if(!S.agenda.some(a => a.turma === t)) return;
+    const c = document.createElement('button');
+    c.className = 'chip' + (S.filtroAgendaTurma === t ? ' on' : '');
+    c.textContent = t;
+    c.onclick = () => { S.filtroAgendaTurma = t; render(); };
+    chips.appendChild(c);
+  });
+  main.appendChild(chips);
+
+  const btnNovo = document.createElement('button');
+  btnNovo.className = 'cfg-btn primario';
+  btnNovo.style.marginTop = '8px';
+  btnNovo.innerHTML = ico('i-plus','ico-18') + ' Registrar aula / tarefa';
+  btnNovo.onclick = () => abrirNovaAgenda();
+  main.appendChild(btnNovo);
+
+  const registros = S.agenda
+    .filter(a => S.filtroAgendaTurma === '__all' || a.turma === S.filtroAgendaTurma)
+    .sort((a, b) => b.data.localeCompare(a.data));
+
+  if(!registros.length){
+    const v = document.createElement('div');
+    v.className = 'vazio';
+    v.innerHTML = `${ico('i-list','ico')}Nenhum registro ainda.<br>Toque em <b>+ Registrar aula</b> para começar.`;
+    main.appendChild(v);
+    return;
+  }
+
+  const porData = {};
+  registros.forEach(r => { (porData[r.data] = porData[r.data] || []).push(r); });
+
+  Object.keys(porData).sort().reverse().forEach(data => {
+    const sec = document.createElement('div');
+    sec.className = 'section-h';
+    sec.style.marginTop = '12px';
+    const [yy, mm, dd] = data.split('-').map(Number);
+    const diaSem = DIAS[new Date(yy, mm-1, dd).getDay()];
+    sec.innerHTML = `${ico('i-calendar','ico-18 lead')}<h3>${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}/${yy} · ${diaSem}</h3>`;
+    main.appendChild(sec);
+
+    porData[data].forEach(r => {
+      const cor = COR_TURMA_SOLID[r.turma] || '#2563eb';
+      const card = document.createElement('div');
+      card.className = 'agenda-card';
+      card.innerHTML = `
+        <div class="agenda-header">
+          <span class="agenda-turma" style="background:${cor}">${esc(r.turma)}</span>
+          ${r.disciplina ? `<span class="agenda-disciplina">${esc(r.disciplina)}</span>` : ''}
+          <button class="agenda-del" title="Excluir">${ico('i-trash','ico-14')}</button>
+        </div>
+        ${r.conteudo ? `<div class="agenda-item"><strong>Conteúdo:</strong> ${esc(r.conteudo)}</div>` : ''}
+        ${r.tarefa ? `<div class="agenda-item agenda-tarefa"><strong>Tarefa:</strong> ${esc(r.tarefa)}</div>` : ''}
+        ${r.obs ? `<div class="agenda-item agenda-obs"><strong>Obs:</strong> ${esc(r.obs)}</div>` : ''}`;
+      card.querySelector('.agenda-del').onclick = () => {
+        if(!confirm('Excluir este registro?')) return;
+        removeAgenda(r.id);
+        render(); toast('Registro excluído');
+      };
+      main.appendChild(card);
+    });
+  });
+}
+
+function abrirNovaAgenda(dataPreenchida, turmaPreenchida){
+  const dataStr = dataPreenchida || S.calDiaAtivo || chaveData(hoje());
+  const turmaSel = turmaPreenchida || S.turmaAluno;
+  abrirModal(`
+    <h2>Registrar aula / tarefa</h2>
+    <label class="f">Data
+      <input class="f" type="date" id="ag-data" value="${dataStr}">
+    </label>
+    <label class="f">Turma
+      <input class="f" type="text" id="ag-turma" list="lt-ag" value="${esc(turmaSel)}" maxlength="40">
+      <datalist id="lt-ag">${TURMAS.map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+    </label>
+    <label class="f">Disciplina (opcional)
+      <input class="f" type="text" id="ag-disciplina" list="lt-agd" maxlength="40" placeholder="Ex: Matemática">
+      <datalist id="lt-agd">${getDisciplinasDaTurma(turmaSel).map(d => `<option value="${esc(d)}">`).join('')}</datalist>
+    </label>
+    <label class="f">Conteúdo dado
+      <textarea class="f" id="ag-conteudo" maxlength="500" placeholder="Ex: Funções quadráticas - definição, gráfico e raízes"></textarea>
+    </label>
+    <label class="f">Tarefa passada
+      <textarea class="f" id="ag-tarefa" maxlength="500" placeholder="Ex: Página 45, exercícios 1 a 10. Entrega: 15/10"></textarea>
+    </label>
+    <label class="f">Observações
+      <textarea class="f" id="ag-obs" maxlength="500" placeholder="Ex: Turma muito participativa. Trazer calculadora na próxima aula."></textarea>
+    </label>
+    <div class="botoes-f">
+      <button class="btn-f secundario" id="btn-cancelar">Cancelar</button>
+      <button class="btn-f primario" id="btn-salvar">${ico('i-check','ico-18')} Salvar</button>
+    </div>`);
+  $('#btn-cancelar').onclick = fecharModal;
+  $('#btn-salvar').onclick = () => {
+    const data = $('#ag-data').value;
+    const turma = $('#ag-turma').value.trim();
+    const disciplina = $('#ag-disciplina').value.trim();
+    const conteudo = $('#ag-conteudo').value.trim();
+    const tarefa = $('#ag-tarefa').value.trim();
+    const obs = $('#ag-obs').value.trim();
+    if(!data || !turma){ toast('Preencha data e turma'); return; }
+    if(!conteudo && !tarefa && !obs){ toast('Preencha pelo menos um campo'); return; }
+    addAgenda(data, turma, disciplina, conteudo, tarefa, obs);
+    fecharModal(); render(); toast('Registro salvo');
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════
+   IMAGEM DE AULAS (COMPARTILHAR)
+   ═══════════════════════════════════════════════════════════ */
 function gerarImagemAulas(dia, aulas){
   aulas = [...aulas].sort((a,b) => a.ini.localeCompare(b.ini));
 
@@ -1428,7 +1753,7 @@ function abrirModalAta(dados, tipo){
 }
 
 /* ═══════════════════════════════════════════════════════════
-   RENDER
+   RENDER PRINCIPAL
    ═══════════════════════════════════════════════════════════ */
 function render(){
   aplicarTema();
@@ -1459,7 +1784,8 @@ function renderChipsCtx(){
     const subs = [
       ['calendario','i-calendar', 'Calendário'],
       ['semana',    'i-grid',     'Semana'],
-      ['geral',     'i-users-group','Geral']
+      ['geral',     'i-users-group','Geral'],
+      ['agenda',    'i-list',     'Agenda']
     ];
     el.innerHTML = `<div class="chips" style="margin-top:12px">${
       subs.map(([v,i,t]) =>
@@ -1503,10 +1829,12 @@ function renderMain(){
     if(S.sub === 'calendario') renderCalendario(main);
     else if(S.sub === 'semana') renderSemana(main);
     else if(S.sub === 'geral') renderGeral(main);
+    else if(S.sub === 'agenda') renderAgenda(main);
   }
   else if(S.tab === 'alunos') renderAlunos(main);
   else if(S.tab === 'config') renderConfig(main);
 }
+
 function renderCalendario(main){
   const card = document.createElement('div');
   card.className = 'card';
@@ -1895,12 +2223,13 @@ function renderAlunos(main){
   pararTickContagem();
   const subNav = document.createElement('div');
   subNav.className = 'seg-tabs'; subNav.style.marginTop = '12px';
-  const subs = [['chamada','i-clipboard','Chamada'],['lista','i-users','Lista'],['dashboard','i-trophy','Dashboard']];
-  subNav.innerHTML = subs.map(([v,i,t]) => `<button class="seg-tab${S.subAlunos===v?' on':''}" data-v="${v}">${ico(i,'ico-16')} ${t}</button>`).join('');
+  const subs = [['chamada','i-clipboard','Chamada'],['lista','i-users','Lista'],['notas','i-chart','Notas'],['dashboard','i-trophy','Dashboard']];
+  subNav.innerHTML = subs.map(([v,i,t]) => `<button class="seg-tab${S.subAlunos===v?' on':''}" data-v="${v}">${ico(i,'ico-14')} ${t}</button>`).join('');
   main.appendChild(subNav);
   subNav.querySelectorAll('button').forEach(b => { b.onclick = () => { S.subAlunos = b.dataset.v; render(); }; });
   if(S.subAlunos === 'chamada')   return renderChamada(main);
   if(S.subAlunos === 'lista')     return renderListaAlunos(main);
+  if(S.subAlunos === 'notas')     return renderNotas(main);
   if(S.subAlunos === 'dashboard') return renderDashboard(main);
 }
 
@@ -2343,7 +2672,7 @@ function abrirAluno(id){
       </div>
     </label>
     <div class="share-row">
-      <button class="share-btn" id="btn-share-desempenho">${ico('i-chart','ico-18')} Compartilhar desempenho</button>
+      <button class="share-btn" id="btn-share-desempenho">${ico('i-chart','ico-18')} Relatório completo (mensal)</button>
       <button class="share-btn" id="btn-share-info">${ico('i-user','ico-18')} Compartilhar dados</button>
       <button class="share-btn" id="btn-share-aulas">${ico('i-calendar','ico-18')} Compartilhar aulas</button>
     </div>
@@ -2400,7 +2729,7 @@ function abrirAluno(id){
     salvarTudo(); fecharModal(); render(); toast('Perfil atualizado');
   };
   $('#btn-share-perfil').onclick = () => compartilharAluno(a.id);
-  $('#btn-share-desempenho').onclick = () => compartilharDesempenho(a.id);
+  $('#btn-share-desempenho').onclick = () => abrirRelatorioMensal(a.id);
   $('#btn-share-info').onclick = () => compartilharInfoAluno(a.id);
   $('#btn-share-aulas').onclick = () => compartilharAulasAluno(a.id);
 }
@@ -2528,6 +2857,9 @@ function compartilharTurma(turma){
   ].join('\n'));
 }
 
+/* ═══════════════════════════════════════════════════════════
+   GERENCIAR TURMAS
+   ═══════════════════════════════════════════════════════════ */
 function abrirGerenciarTurmas(){
   const lista = TURMAS.map(t => {
     const qtd = S.alunos.filter(a => a.turma === t).length;
@@ -2591,6 +2923,8 @@ function renomearTurma(antigo, novo){
   S.aulas.forEach(a => { if(a.turma === antigo) a.turma = novo; });
   S.geral.forEach(a => { if(a.turma === antigo) a.turma = novo; });
   S.vistos.forEach(v => { if(v.turma === antigo) v.turma = novo; });
+  S.notasTrim.forEach(n => { if(n.turma === antigo) n.turma = novo; });
+  S.agenda.forEach(a => { if(a.turma === antigo) a.turma = novo; });
   S.config.turmasRenomeadas = S.config.turmasRenomeadas || {};
   S.config.turmasRenomeadas[antigo] = novo;
   if(S.config.turmasCustom){
@@ -2666,6 +3000,8 @@ function confirmarExcluirTurma(nome){
       S.aulas.forEach(a => { if(a.turma === nome) a.turma = destino; });
       S.geral.forEach(a => { if(a.turma === nome) a.turma = destino; });
       S.vistos.forEach(v => { if(v.turma === nome) v.turma = destino; });
+      S.notasTrim.forEach(n => { if(n.turma === nome) n.turma = destino; });
+      S.agenda.forEach(a => { if(a.turma === nome) a.turma = destino; });
       removerTurmaDasListas(nome);
       salvarTudo(); render(); toast('Turma excluída');
       abrirGerenciarTurmas();
@@ -2732,6 +3068,688 @@ function restaurarTurmasOriginais(){
   abrirGerenciarTurmas();
 }
 
+/* ═══════════════════════════════════════════════════════════
+   RELATÓRIO MENSAL DO ALUNO
+   ═══════════════════════════════════════════════════════════ */
+function coletarDadosRelatorioMensal(aluno){
+  const chamadas = S.vistos
+    .filter(v => v.turma === aluno.turma)
+    .filter(v => (v.status && v.status[aluno.id]) || (v.registros && v.registros[aluno.id]))
+    .sort((a, b) => b.data.localeCompare(a.data));
+
+  const porMes = {};
+  chamadas.forEach(v => {
+    const ym = v.data.slice(0, 7);
+    if(!porMes[ym]) porMes[ym] = [];
+    porMes[ym].push(v);
+  });
+
+  const meses = Object.keys(porMes).sort().reverse().map(ym => {
+    const [y, m] = ym.split('-').map(Number);
+    const chamadasMes = porMes[ym];
+
+    let pres = 0, aus = 0, jus = 0;
+    let trabFeitos = 0, trabTot = 0;
+    let provFeitas = 0, provTot = 0;
+    let ativFeitas = 0, ativTot = 0;
+    const notasMes = [];
+
+    const aulas = chamadasMes.map(v => {
+      const st = v.status && v.status[aluno.id];
+      const reg = (v.registros && v.registros[aluno.id]) || {};
+      if(st === 'presente') pres++;
+      else if(st === 'ausente') aus++;
+      else if(st === 'justificado') jus++;
+      if(reg.trabalho != null){ trabTot++; if(reg.trabalho) trabFeitos++; }
+      if(reg.prova != null){ provTot++; if(reg.prova) provFeitas++; }
+      if(reg.atividade != null){ ativTot++; if(reg.atividade) ativFeitas++; }
+      if(reg.nota != null && !isNaN(reg.nota)) notasMes.push(Number(reg.nota));
+
+      const aulaObj = S.aulas.find(au => au.id === v.aulaId);
+      return {
+        data: v.data,
+        ini: aulaObj ? aulaObj.ini : '',
+        materia: aulaObj ? (aulaObj.materia || 'Aula') : 'Aula',
+        status: st || 'pendente',
+        registros: reg
+      };
+    });
+
+    const freqMes = (pres + aus + jus) ? Math.round(pres / (pres + aus + jus) * 100) : null;
+    const mediaMes = notasMes.length ? (notasMes.reduce((a,b)=>a+b,0) / notasMes.length) : null;
+
+    return {
+      ym, ano: y, mes: m,
+      nomeMes: MESES[m-1] + '/' + y,
+      aulas,
+      pres, aus, jus,
+      freq: freqMes,
+      trabFeitos, trabTot,
+      provFeitas, provTot,
+      ativFeitas, ativTot,
+      notas: notasMes,
+      media: mediaMes,
+      totalAulas: chamadasMes.length
+    };
+  });
+
+  let tPres = 0, tAus = 0, tJus = 0;
+  let tTrabF = 0, tTrabT = 0;
+  let tProvF = 0, tProvT = 0;
+  let tAtivF = 0, tAtivT = 0;
+  const todasNotas = [];
+  chamadas.forEach(v => {
+    const st = v.status && v.status[aluno.id];
+    const reg = (v.registros && v.registros[aluno.id]) || {};
+    if(st === 'presente') tPres++;
+    else if(st === 'ausente') tAus++;
+    else if(st === 'justificado') tJus++;
+    if(reg.trabalho != null){ tTrabT++; if(reg.trabalho) tTrabF++; }
+    if(reg.prova != null){ tProvT++; if(reg.prova) tProvF++; }
+    if(reg.atividade != null){ tAtivT++; if(reg.atividade) tAtivF++; }
+    if(reg.nota != null && !isNaN(reg.nota)) todasNotas.push(Number(reg.nota));
+  });
+
+  const { score } = calcScore(aluno);
+  const freqGeral = (tPres + tAus + tJus) ? Math.round(tPres / (tPres + tAus + tJus) * 100) : null;
+  const mediaGeral = todasNotas.length ? (todasNotas.reduce((a,b)=>a+b,0) / todasNotas.length) : null;
+
+  return {
+    aluno,
+    score,
+    meses,
+    geral: {
+      pres: tPres, aus: tAus, jus: tJus,
+      freq: freqGeral,
+      trabFeitos: tTrabF, trabTot: tTrabT,
+      provFeitas: tProvF, provTot: tProvT,
+      ativFeitas: tAtivF, ativTot: tAtivT,
+      notas: todasNotas,
+      media: mediaGeral,
+      totalChamadas: chamadas.length
+    }
+  };
+}
+
+function gerarImagemRelatorioMensal(dados){
+  const { aluno, score, meses, geral } = dados;
+  const W = 1080;
+  const padding = 56;
+  const cardW = W - padding * 2;
+  const headerH = 380;
+
+  const sumarioH = 200;
+  const mesHeaderH = 90;
+  const aulaRowH = 96;
+  const aulaRowGap = 10;
+  const mesResumoH = 70;
+  const mesGap = 40;
+  const obsHeaderH = 70;
+  const obsItemH = 90;
+  const footerH = 100;
+
+  let alturaMeses = 0;
+  meses.forEach(m => {
+    alturaMeses += mesHeaderH + m.aulas.length * (aulaRowH + aulaRowGap) - aulaRowGap + mesResumoH + mesGap;
+  });
+
+  const obs = (aluno.observacoes || []).sort((x, y) => (y.data || '').localeCompare(x.data || ''));
+  const obsAltura = obs.length
+    ? (obsHeaderH + obs.length * (obsItemH + 8) + obs.length * 40 + 120)
+    : 0;
+
+  const startY = headerH + 30;
+  const H = startY + sumarioH + 40 + alturaMeses + obsAltura + footerH;
+
+  const canvas = document.createElement('canvas');
+  const scale = 2;
+  canvas.width = W * scale;
+  canvas.height = H * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = '#f4f4f8';
+  ctx.fillRect(0, 0, W, H);
+
+  const grad = ctx.createLinearGradient(0, 0, W, headerH);
+  grad.addColorStop(0, '#4f46e5');
+  grad.addColorStop(0.5, '#6366f1');
+  grad.addColorStop(1, '#8b5cf6');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, headerH);
+
+  ctx.globalAlpha = 0.08;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(W - 100, 60, 220, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(80, headerH - 40, 160, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.globalAlpha = 0.85;
+  ctx.fillText('RELATÓRIO DO ALUNO', W / 2, 60);
+  ctx.globalAlpha = 1;
+
+  ctx.font = 'bold 54px -apple-system, BlinkMacSystemFont, sans-serif';
+  const nomeLinhas = quebrarTexto(ctx, aluno.nome, W - padding * 2);
+  nomeLinhas.slice(0, 2).forEach((linha, i) => {
+    ctx.fillText(linha, W / 2, 130 + i * 60);
+  });
+
+  ctx.globalAlpha = 0.9;
+  ctx.font = '500 32px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(aluno.turma, W / 2, 270);
+  ctx.globalAlpha = 1;
+
+  ctx.font = 'bold 60px -apple-system, BlinkMacSystemFont, sans-serif';
+  const scoreY = 330;
+  ctx.fillText(`${score}`, W / 2 - 40, scoreY);
+  ctx.font = '500 28px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.globalAlpha = 0.85;
+  ctx.fillText('/100', W / 2 + 30, scoreY + 8);
+  ctx.globalAlpha = 1;
+
+  let y = startY;
+
+  ctx.fillStyle = '#fff';
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.08)';
+  ctx.shadowBlur = 20;
+  ctx.shadowOffsetY = 4;
+  drawRoundedRect(ctx, padding, y, cardW, sumarioH - 20, 24);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const metricas = [
+    { lbl: 'FREQUÊNCIA', val: geral.freq != null ? geral.freq + '%' : '—', cor: '#10b981' },
+    { lbl: 'MÉDIA', val: geral.media != null ? geral.media.toFixed(2) : '—', cor: '#2563eb' },
+    { lbl: 'TRABALHOS', val: geral.trabTot ? Math.round(geral.trabFeitos/geral.trabTot*100) + '%' : '—', cor: '#6366f1' },
+    { lbl: 'PROVAS', val: geral.provTot ? Math.round(geral.provFeitas/geral.provTot*100) + '%' : '—', cor: '#8b5cf6' }
+  ];
+  const colW = (cardW - 40) / 4;
+  metricas.forEach((m, i) => {
+    const cx = padding + 20 + colW * i + colW / 2;
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(m.lbl, cx, y + 45);
+    ctx.fillStyle = m.cor;
+    ctx.font = 'bold 48px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText(m.val, cx, y + 105);
+  });
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
+  const txtAus = `Presenças: ${geral.pres} · Faltas: ${geral.aus} · Justificadas: ${geral.jus}`;
+  ctx.fillText(txtAus, W / 2, y + sumarioH - 45);
+
+  y += sumarioH + 20;
+
+  if(!meses.length){
+    ctx.fillStyle = '#fff';
+    drawRoundedRect(ctx, padding, y, cardW, 120, 24);
+    ctx.fill();
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 28px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Nenhum registro de chamada ainda', W / 2, y + 60);
+    y += 120;
+  } else {
+    meses.forEach((mes) => {
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      ctx.fillStyle = '#0a1428';
+      ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(mes.nomeMes, padding, y + 40);
+
+      ctx.textAlign = 'right';
+      if(mes.freq != null){
+        const corFreq = mes.freq >= 90 ? '#10b981' : mes.freq >= 75 ? '#f59e0b' : '#ef4444';
+        ctx.fillStyle = corFreq;
+        ctx.font = 'bold 34px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText(`${mes.freq}%`, W - padding, y + 40);
+      }
+
+      ctx.strokeStyle = 'rgba(10, 20, 40, 0.08)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(padding, y + mesHeaderH - 20);
+      ctx.lineTo(W - padding, y + mesHeaderH - 20);
+      ctx.stroke();
+
+      y += mesHeaderH;
+
+      mes.aulas.forEach(aula => {
+        const stInfo = STATUS_ATA[aula.status];
+
+        ctx.fillStyle = '#fff';
+        ctx.shadowColor = 'rgba(15, 23, 42, 0.05)';
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 2;
+        drawRoundedRect(ctx, padding, y, cardW, aulaRowH, 16);
+        ctx.fill();
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+
+        ctx.fillStyle = stInfo.cor;
+        drawRoundedRectLeft(ctx, padding, y, 6, aulaRowH, 16);
+        ctx.fill();
+
+        ctx.font = '32px -apple-system, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(stInfo.emoji, padding + 45, y + aulaRowH/2);
+
+        const [yy, mm, dd] = aula.data.split('-').map(Number);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#0a1428';
+        ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText(`${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}`, padding + 90, y + 34);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText(aula.ini, padding + 90, y + 66);
+
+        ctx.fillStyle = '#3d4d6b';
+        ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, sans-serif';
+        let materiaTxt = aula.materia;
+        const maxMatW = cardW - 200;
+        while(ctx.measureText(materiaTxt).width > maxMatW && materiaTxt.length > 10){
+          materiaTxt = materiaTxt.slice(0, -2);
+        }
+        if(materiaTxt !== aula.materia) materiaTxt = materiaTxt.slice(0, -1) + '…';
+        ctx.fillText(materiaTxt, padding + 220, y + 34);
+
+        ctx.fillStyle = stInfo.cor;
+        ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText(stInfo.label, padding + 220, y + 66);
+
+        const badges = [];
+        if(aula.registros.trabalho) badges.push({ txt: 'TRAB', cor: '#6366f1' });
+        if(aula.registros.prova) badges.push({ txt: 'PROV', cor: '#8b5cf6' });
+        if(aula.registros.atividade) badges.push({ txt: 'ATIV', cor: '#2563eb' });
+        if(aula.registros.nota != null) badges.push({ txt: 'Nota ' + aula.registros.nota, cor: '#10b981' });
+
+        if(badges.length){
+          let bx = W - padding - 16;
+          ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
+          ctx.textAlign = 'center';
+          for(let i = badges.length - 1; i >= 0; i--){
+            const b = badges[i];
+            const tw = ctx.measureText(b.txt).width + 20;
+            bx -= tw;
+            ctx.fillStyle = b.cor;
+            ctx.globalAlpha = 0.15;
+            drawRoundedRect(ctx, bx, y + aulaRowH/2 - 15, tw, 30, 15);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = b.cor;
+            ctx.fillText(b.txt, bx + tw/2, y + aulaRowH/2 + 1);
+            bx -= 6;
+          }
+          ctx.textAlign = 'left';
+        }
+
+        y += aulaRowH + aulaRowGap;
+      });
+
+      y += 4;
+      ctx.fillStyle = '#f7faff';
+      drawRoundedRect(ctx, padding, y, cardW, mesResumoH - 12, 14);
+      ctx.fill();
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#7d8ba8';
+      ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+
+      const partes = [];
+      partes.push(`${mes.totalAulas} aula${mes.totalAulas === 1 ? '' : 's'}`);
+      if(mes.freq != null) partes.push(`Freq ${mes.freq}%`);
+      if(mes.trabTot) partes.push(`Trab ${mes.trabFeitos}/${mes.trabTot}`);
+      if(mes.provTot) partes.push(`Prov ${mes.provFeitas}/${mes.provTot}`);
+      if(mes.ativTot) partes.push(`Ativ ${mes.ativFeitas}/${mes.ativTot}`);
+      if(mes.media != null) partes.push(`Média ${mes.media.toFixed(2)}`);
+
+      ctx.fillText(partes.join('  ·  '), W / 2, y + (mesResumoH - 12)/2);
+
+      y += mesResumoH + mesGap;
+    });
+  }
+
+  if(obs.length){
+    y += 10;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#0a1428';
+    ctx.font = 'bold 36px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('Observações do professor', padding, y + 30);
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('Registros de acompanhamento · Diálogo com família e coordenação', padding, y + 62);
+
+    ctx.strokeStyle = 'rgba(10, 20, 40, 0.08)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(padding, y + obsHeaderH + 10);
+    ctx.lineTo(W - padding, y + obsHeaderH + 10);
+    ctx.stroke();
+
+    y += obsHeaderH + 20;
+
+    obs.slice(0, 20).forEach(o => {
+      ctx.fillStyle = '#fff';
+      ctx.shadowColor = 'rgba(15, 23, 42, 0.04)';
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetY = 2;
+      drawRoundedRect(ctx, padding, y, cardW, obsItemH, 14);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+
+      const corTipo = o.tipo === 'positivo' ? '#10b981'
+        : o.tipo === 'negativo' ? '#ef4444'
+        : o.tipo === 'pedagogico' ? '#06b6d4'
+        : '#7d8ba8';
+
+      ctx.fillStyle = corTipo;
+      drawRoundedRectLeft(ctx, padding, y, 5, obsItemH, 14);
+      ctx.fill();
+
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
+      const [oy, om, od] = o.data.split('-').map(Number);
+      ctx.fillText(`${String(od).padStart(2,'0')}/${String(om).padStart(2,'0')}/${oy}`, padding + 22, y + 26);
+
+      const tipoLabel = o.tipo === 'positivo' ? 'Positivo'
+        : o.tipo === 'negativo' ? 'Negativo'
+        : o.tipo === 'pedagogico' ? 'Pedagógico'
+        : 'Neutro';
+      ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
+      const tw = ctx.measureText(tipoLabel).width + 20;
+      ctx.fillStyle = corTipo;
+      ctx.globalAlpha = 0.15;
+      drawRoundedRect(ctx, padding + 22 + 90, y + 14, tw, 26, 13);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = corTipo;
+      ctx.textAlign = 'center';
+      ctx.fillText(tipoLabel, padding + 22 + 90 + tw/2, y + 27);
+      ctx.textAlign = 'left';
+
+      ctx.fillStyle = '#0a1428';
+      ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
+      const maxTxtW = cardW - 44;
+      const linhas = quebrarTexto(ctx, o.texto, maxTxtW);
+      linhas.forEach((linha, li) => {
+        ctx.fillText(linha, padding + 22, y + 60 + li * 26);
+      });
+
+      const alturaNecessaria = 60 + linhas.length * 26 + 18;
+      y += Math.max(obsItemH, alturaNecessaria) + 8;
+    });
+
+    if(obs.length > 20){
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'italic 18px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`+ ${obs.length - 20} observações mais antigas (consultar no app)`, W / 2, y + 20);
+      y += 40;
+    }
+
+    y += 30;
+    ctx.strokeStyle = 'rgba(10, 20, 40, 0.25)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(padding + 150, y + 50);
+    ctx.lineTo(W - padding - 150, y + 50);
+    ctx.stroke();
+
+    ctx.fillStyle = '#7d8ba8';
+    ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(S.config.nomeProf || 'Professor', W / 2, y + 78);
+    y += 100;
+  }
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '500 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const h = new Date();
+  ctx.fillText(`Gerado em ${String(h.getDate()).padStart(2,'0')}/${String(h.getMonth()+1).padStart(2,'0')}/${h.getFullYear()} · horarioescola.netlify.app`, W / 2, H - 44);
+
+  return canvas;
+}
+
+function gerarTextoRelatorioMensal(dados){
+  const { aluno, score, meses, geral } = dados;
+  const n = NIVEL_MAP[aluno.nivel] || NIVEL_MAP.bom;
+
+  const linhas = [];
+  linhas.push(`📊 *RELATÓRIO DO ALUNO*`);
+  linhas.push(`👤 *${aluno.nome}*`);
+  linhas.push(`🏫 Turma: ${aluno.turma}`);
+  linhas.push(`⭐ Desempenho: ${n.nome}  ·  Score: *${score}/100*`);
+  linhas.push(``);
+  linhas.push(`━━━━━━━━━━━━━━━━━`);
+  linhas.push(`*RESUMO GERAL*`);
+  if(geral.freq != null) linhas.push(`📅 Frequência: *${geral.freq}%*  (${geral.pres}P · ${geral.aus}A · ${geral.jus}J)`);
+  if(geral.media != null) linhas.push(`📝 Média de notas: *${geral.media.toFixed(2)}* (${geral.notas.length} aval.)`);
+  if(geral.trabTot) linhas.push(`📚 Trabalhos: *${geral.trabFeitos}/${geral.trabTot}* (${Math.round(geral.trabFeitos/geral.trabTot*100)}%)`);
+  if(geral.provTot) linhas.push(`✏️ Provas: *${geral.provFeitas}/${geral.provTot}* (${Math.round(geral.provFeitas/geral.provTot*100)}%)`);
+  if(geral.ativTot) linhas.push(`✅ Atividades: *${geral.ativFeitas}/${geral.ativTot}* (${Math.round(geral.ativFeitas/geral.ativTot*100)}%)`);
+
+  if(!meses.length){
+    linhas.push(``);
+    linhas.push(`_Nenhum registro de chamada ainda._`);
+  } else {
+    meses.forEach(mes => {
+      linhas.push(``);
+      linhas.push(`━━━━━━━━━━━━━━━━━`);
+      linhas.push(`📅 *${mes.nomeMes.toUpperCase()}*`);
+      const sub = [];
+      if(mes.freq != null) sub.push(`Freq ${mes.freq}%`);
+      if(mes.trabTot) sub.push(`Trab ${mes.trabFeitos}/${mes.trabTot}`);
+      if(mes.provTot) sub.push(`Prov ${mes.provFeitas}/${mes.provTot}`);
+      if(mes.ativTot) sub.push(`Ativ ${mes.ativFeitas}/${mes.ativTot}`);
+      if(mes.media != null) sub.push(`Média ${mes.media.toFixed(2)}`);
+      linhas.push(`_${sub.join(' · ')}_`);
+      linhas.push(``);
+
+      mes.aulas.forEach(aula => {
+        const stInfo = STATUS_ATA[aula.status];
+        const [yy, mm, dd] = aula.data.split('-').map(Number);
+        const dia = `${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}`;
+        const badges = [];
+        if(aula.registros.trabalho) badges.push('TRAB');
+        if(aula.registros.prova) badges.push('PROV');
+        if(aula.registros.atividade) badges.push('ATIV');
+        if(aula.registros.nota != null) badges.push(`Nota ${aula.registros.nota}`);
+
+        const sufixo = badges.length ? `  _[${badges.join(', ')}]_` : '';
+        linhas.push(`${stInfo.emoji} *${dia}* ${aula.ini} · ${aula.materia}${sufixo}`);
+      });
+    });
+  }
+
+  /* ── NOTAS TRIMESTRAIS ── */
+  const notasTrimAluno = S.notasTrim.filter(n => n.alunoId === aluno.id);
+  if(notasTrimAluno.length){
+    const porDisc = {};
+    notasTrimAluno.forEach(n => {
+      if(!porDisc[n.disciplina]) porDisc[n.disciplina] = {};
+      porDisc[n.disciplina][n.trimestre] = n;
+    });
+    linhas.push(``);
+    linhas.push(`━━━━━━━━━━━━━━━━━`);
+    linhas.push(`📚 *NOTAS TRIMESTRAIS*`);
+    linhas.push(``);
+    Object.keys(porDisc).sort().forEach(disc => {
+      const trim = porDisc[disc];
+      const valores = TRIMESTRES.map(t => {
+        const n = trim[t];
+        return n && n.nota != null ? n.nota.toFixed(1) : '—';
+      });
+      const notasVal = TRIMESTRES.map(t => trim[t]?.nota).filter(v => v != null);
+      const media = notasVal.length ? (notasVal.reduce((a,b)=>a+b,0)/notasVal.length) : null;
+      linhas.push(`*${disc}*`);
+      linhas.push(`  ${TRIMESTRES.map((t, i) => `${t}º: ${valores[i]}`).join('  ·  ')}${media != null ? `  → Média: *${media.toFixed(2)}*` : ''}`);
+      TRIMESTRES.forEach(t => {
+        const n = trim[t];
+        if(n && n.obs){
+          linhas.push(`  _${t}º Trim: ${n.obs}_`);
+        }
+      });
+      linhas.push(``);
+    });
+  }
+
+  /* ── CONTEÚDO MINISTRADO (Agenda) ── */
+  const agendaAluno = S.agenda
+    .filter(a => a.turma === aluno.turma)
+    .sort((a, b) => b.data.localeCompare(a.data))
+    .slice(0, 15);
+  if(agendaAluno.length){
+    linhas.push(``);
+    linhas.push(`━━━━━━━━━━━━━━━━━`);
+    linhas.push(`📖 *CONTEÚDO MINISTRADO*`);
+    linhas.push(`_Últimos 15 registros_`);
+    linhas.push(``);
+    agendaAluno.forEach(a => {
+      const [yy, mm, dd] = a.data.split('-').map(Number);
+      linhas.push(`*${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}* — ${a.disciplina || 'Aula'}`);
+      if(a.conteudo) linhas.push(`  📘 ${a.conteudo}`);
+      if(a.tarefa) linhas.push(`  📝 Tarefa: ${a.tarefa}`);
+      linhas.push(``);
+    });
+  }
+
+  const obs = (aluno.observacoes || []).sort((x, y) => (y.data || '').localeCompare(x.data || ''));
+  if(obs.length){
+    linhas.push(``);
+    linhas.push(`━━━━━━━━━━━━━━━━━`);
+    linhas.push(`📝 *OBSERVAÇÕES DO PROFESSOR*`);
+    linhas.push(`_Acompanhamento · Diálogo com família e coordenação_`);
+    linhas.push(``);
+    obs.slice(0, 25).forEach(o => {
+      const [oy, om, od] = o.data.split('-').map(Number);
+      const tipo = o.tipo === 'positivo' ? '🟢 Positivo'
+        : o.tipo === 'negativo' ? '🔴 Negativo'
+        : o.tipo === 'pedagogico' ? '🔵 Pedagógico'
+        : '⚪ Neutro';
+      linhas.push(`*${String(od).padStart(2,'0')}/${String(om).padStart(2,'0')}/${oy}* · ${tipo}`);
+      linhas.push(o.texto);
+      linhas.push(``);
+    });
+    if(obs.length > 25){
+      linhas.push(`_+ ${obs.length - 25} observações mais antigas (consultar no app)_`);
+    }
+    linhas.push(``);
+    linhas.push(`_Assinado: ${S.config.nomeProf || 'Professor'}_`);
+  }
+
+  linhas.push(``);
+  linhas.push(`━━━━━━━━━━━━━━━━━`);
+  linhas.push(`— ${S.config.nomeProf || 'Professor'}`);
+
+  return linhas.join('\n');
+}
+
+function abrirRelatorioMensal(alunoId){
+  const aluno = S.alunos.find(x => x.id === alunoId);
+  if(!aluno){ toast('Aluno não encontrado'); return; }
+
+  const dados = coletarDadosRelatorioMensal(aluno);
+  const { score, meses, geral } = dados;
+  const n = NIVEL_MAP[aluno.nivel] || NIVEL_MAP.bom;
+
+  const resumo = [
+    `Score ${score}/100 · ${n.nome}`,
+    geral.freq != null ? `Freq ${geral.freq}%` : null,
+    geral.media != null ? `Média ${geral.media.toFixed(2)}` : null,
+    `${meses.length} mês${meses.length === 1 ? '' : 'es'} com registros`
+  ].filter(Boolean).join('  ·  ');
+
+  abrirModal(`
+    <h2>Relatório do aluno</h2>
+    <div class="perfil-head" style="margin-bottom:16px">
+      <div class="avatar" style="background:linear-gradient(135deg,${corDe(aluno.nome)},${corDe(aluno.nome)}cc);width:56px;height:56px;flex:0 0 56px;font-size:20px">${iniciais(aluno.nome)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="nome" style="font-size:16px">${esc(aluno.nome)}</div>
+        <div class="turma">${esc(aluno.turma)}</div>
+      </div>
+    </div>
+
+    <div style="background:var(--card-2);border-radius:14px;padding:14px;margin-bottom:16px;font-size:13px;color:var(--text-2);font-weight:600;line-height:1.5">
+      ${ico('i-chart','ico-14')} ${esc(resumo)}
+    </div>
+
+    <div style="font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:10px">
+      ${ico('i-share','ico-14')} Compartilhar relatório
+    </div>
+
+    <button class="share-btn" id="rel-img" style="margin-bottom:10px">
+      ${ico('i-chart','ico-20')}
+      <div style="text-align:left;flex:1">
+        <div>Relatório completo em imagem</div>
+        <small style="display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:3px">
+          PNG · Todos os meses, notas, agenda e observações
+        </small>
+      </div>
+    </button>
+
+    <button class="share-btn" id="rel-txt">
+      ${ico('i-note','ico-20')}
+      <div style="text-align:left;flex:1">
+        <div>Relatório completo em texto</div>
+        <small style="display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:3px">
+          Formato WhatsApp · Ideal para colar em conversa
+        </small>
+      </div>
+    </button>
+
+    <div class="botoes-f">
+      <button class="btn-f secundario" id="btn-fechar">Cancelar</button>
+    </div>
+  `);
+
+  $('#btn-fechar').onclick = fecharModal;
+
+  $('#rel-img').onclick = async () => {
+    fecharModal();
+    toast('Gerando relatório...');
+    try{
+      const canvas = gerarImagemRelatorioMensal(dados);
+      const nome = `relatorio-${aluno.nome.toLowerCase().replace(/\s+/g,'-').slice(0,30)}.png`;
+      await compartilharAtaImagem(canvas, nome, 'Relatório — ' + aluno.nome);
+    }catch(e){
+      console.error(e);
+      toast('Erro ao gerar relatório');
+    }
+  };
+
+  $('#rel-txt').onclick = async () => {
+    fecharModal();
+    const texto = gerarTextoRelatorioMensal(dados);
+    await compartilharTexto('Relatório — ' + aluno.nome, texto);
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CONFIG
+   ═══════════════════════════════════════════════════════════ */
 function renderConfig(main){
   pararTickContagem();
   main.appendChild(blocoConfig(ico('i-user','ico-16')+' Perfil', [
@@ -2840,8 +3858,9 @@ function renderConfig(main){
   const sb = blocoConfig(ico('i-info','ico-16')+' Sobre', []);
   const sc = document.createElement('div');
   sc.style.cssText = 'font-size:13px;color:var(--muted);line-height:1.7';
-  sc.innerHTML = `<b>Horário Profissional v6.3</b><br>PWA offline · Painel do professor<br>
-    ${S.alunos.length} alunos · ${S.aulas.length} aulas · ${TURMAS.length} turmas`;
+  sc.innerHTML = `<b>Horário Profissional v6.4</b><br>PWA offline · Painel do professor<br>
+    ${S.alunos.length} alunos · ${S.aulas.length} aulas · ${TURMAS.length} turmas<br>
+    ${S.notasTrim.length} notas trimestrais · ${S.agenda.length} registros na agenda`;
   sb.appendChild(sc);
   main.appendChild(sb);
 }
@@ -2891,6 +3910,9 @@ function linhaInput(rotulo, valor, cb){
   return d;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   MODAIS DE AULA
+   ═══════════════════════════════════════════════════════════ */
 function abrirEdicaoAula(id, tipo){
   const arr = tipo === 'aula' ? S.aulas : S.geral;
   const a = arr.find(x => x.id === id);
@@ -3004,6 +4026,9 @@ function abrirNovaAula(){
   };
 }
 
+/* ═══════════════════════════════════════════════════════════
+   NOTIFICAÇÕES
+   ═══════════════════════════════════════════════════════════ */
 async function mostrarNotif(t, o){
   if('serviceWorker' in navigator){
     try{
@@ -3078,9 +4103,13 @@ function verificarNotif(){
   });
 }
 
+/* ═══════════════════════════════════════════════════════════
+   BACKUP
+   ═══════════════════════════════════════════════════════════ */
 function exportar(){
-  const d = { versao:'6.3', exportadoEm: new Date().toISOString(),
+  const d = { versao:'6.4', exportadoEm: new Date().toISOString(),
     aulas:S.aulas, geral:S.geral, alunos:S.alunos, vistos:S.vistos,
+    notasTrim:S.notasTrim, agenda:S.agenda,
     config:{ tema:S.config.tema, avisoMin:S.config.avisoMin,
       feriados:S.config.feriados, nomeProf:S.config.nomeProf,
       turmasCustom:S.config.turmasCustom,
@@ -3105,6 +4134,8 @@ $('#input-importar').onchange = e => {
       S.geral = (d.geral||[]).map(a => ({id:a.id||uid(), ...a}));
       S.alunos = (d.alunos||[]).map(a => migrarAluno({id:a.id||uid(), observacoes:[], ...a}));
       S.vistos = (d.vistos||[]).map(migrarVisto);
+      S.notasTrim = d.notasTrim || [];
+      S.agenda = d.agenda || [];
       if(d.config) S.config = {...S.config, ...d.config};
       migrarNomes(S.aulas); migrarNomes(S.geral);
       aplicarConfiguracoesTurmas();
@@ -3115,6 +4146,9 @@ $('#input-importar').onchange = e => {
   r.readAsText(f); e.target.value = '';
 };
 
+/* ═══════════════════════════════════════════════════════════
+   EVENTOS GLOBAIS
+   ═══════════════════════════════════════════════════════════ */
 $$('#bottom-nav button').forEach(b => {
   b.onclick = () => {
     S.tab = b.dataset.tab;
@@ -3127,6 +4161,7 @@ $$('#bottom-nav button').forEach(b => {
 });
 $('#add').onclick = () => {
   if(S.tab === 'alunos' && S.subAlunos === 'lista') abrirNovoAluno();
+  else if(S.tab === 'horario' && S.sub === 'agenda') abrirNovaAgenda();
   else abrirNovaAula();
 };
 
@@ -3136,6 +4171,9 @@ function tick(){
   verificarNotif();
 }
 
+/* ═══════════════════════════════════════════════════════════
+   AUTO-HIDE NAV
+   ═══════════════════════════════════════════════════════════ */
 function instalarAutoHideNav(){
   const nav = document.getElementById('bottom-nav');
   if(!nav) return;
@@ -3162,648 +4200,8 @@ function instalarAutoHideNav(){
 }
 
 /* ═══════════════════════════════════════════════════════════
-   RELATÓRIO MENSAL DO ALUNO — imagem + texto
+   INIT
    ═══════════════════════════════════════════════════════════ */
-function coletarDadosRelatorioMensal(aluno){
-  // Pega todos os vistos desse aluno
-  const chamadas = S.vistos
-    .filter(v => v.turma === aluno.turma)
-    .filter(v => (v.status && v.status[aluno.id]) || (v.registros && v.registros[aluno.id]))
-    .sort((a, b) => b.data.localeCompare(a.data));
-
-  // Agrupa por mês (YYYY-MM)
-  const porMes = {};
-  chamadas.forEach(v => {
-    const ym = v.data.slice(0, 7); // "2026-10"
-    if(!porMes[ym]) porMes[ym] = [];
-    porMes[ym].push(v);
-  });
-
-  // Constrói array de meses (do mais recente pro mais antigo)
-  const meses = Object.keys(porMes).sort().reverse().map(ym => {
-    const [y, m] = ym.split('-').map(Number);
-    const chamadasMes = porMes[ym];
-
-    // Stats do mês
-    let pres = 0, aus = 0, jus = 0;
-    let trabFeitos = 0, trabTot = 0;
-    let provFeitas = 0, provTot = 0;
-    let ativFeitas = 0, ativTot = 0;
-    const notasMes = [];
-
-    const aulas = chamadasMes.map(v => {
-      const st = v.status && v.status[aluno.id];
-      const reg = (v.registros && v.registros[aluno.id]) || {};
-      if(st === 'presente') pres++;
-      else if(st === 'ausente') aus++;
-      else if(st === 'justificado') jus++;
-      if(reg.trabalho != null){ trabTot++; if(reg.trabalho) trabFeitos++; }
-      if(reg.prova != null){ provTot++; if(reg.prova) provFeitas++; }
-      if(reg.atividade != null){ ativTot++; if(reg.atividade) ativFeitas++; }
-      if(reg.nota != null && !isNaN(reg.nota)) notasMes.push(Number(reg.nota));
-
-      // Descobre a matéria daquela aula
-      const aulaObj = S.aulas.find(au => au.id === v.aulaId);
-      return {
-        data: v.data,
-        ini: aulaObj ? aulaObj.ini : '',
-        materia: aulaObj ? (aulaObj.materia || 'Aula') : 'Aula',
-        status: st || 'pendente',
-        registros: reg
-      };
-    });
-
-    const freqMes = (pres + aus + jus) ? Math.round(pres / (pres + aus + jus) * 100) : null;
-    const mediaMes = notasMes.length ? (notasMes.reduce((a,b)=>a+b,0) / notasMes.length) : null;
-
-    return {
-      ym, ano: y, mes: m,
-      nomeMes: MESES[m-1] + '/' + y,
-      aulas,
-      pres, aus, jus,
-      freq: freqMes,
-      trabFeitos, trabTot,
-      provFeitas, provTot,
-      ativFeitas, ativTot,
-      notas: notasMes,
-      media: mediaMes,
-      totalAulas: chamadasMes.length
-    };
-  });
-
-  // Stats gerais (todas as chamadas)
-  let tPres = 0, tAus = 0, tJus = 0;
-  let tTrabF = 0, tTrabT = 0;
-  let tProvF = 0, tProvT = 0;
-  let tAtivF = 0, tAtivT = 0;
-  const todasNotas = [];
-  chamadas.forEach(v => {
-    const st = v.status && v.status[aluno.id];
-    const reg = (v.registros && v.registros[aluno.id]) || {};
-    if(st === 'presente') tPres++;
-    else if(st === 'ausente') tAus++;
-    else if(st === 'justificado') tJus++;
-    if(reg.trabalho != null){ tTrabT++; if(reg.trabalho) tTrabF++; }
-    if(reg.prova != null){ tProvT++; if(reg.prova) tProvF++; }
-    if(reg.atividade != null){ tAtivT++; if(reg.atividade) tAtivF++; }
-    if(reg.nota != null && !isNaN(reg.nota)) todasNotas.push(Number(reg.nota));
-  });
-
-  const { score } = calcScore(aluno);
-  const freqGeral = (tPres + tAus + tJus) ? Math.round(tPres / (tPres + tAus + tJus) * 100) : null;
-  const mediaGeral = todasNotas.length ? (todasNotas.reduce((a,b)=>a+b,0) / todasNotas.length) : null;
-
-  return {
-    aluno,
-    score,
-    meses,
-    geral: {
-      pres: tPres, aus: tAus, jus: tJus,
-      freq: freqGeral,
-      trabFeitos: tTrabF, trabTot: tTrabT,
-      provFeitas: tProvF, provTot: tProvT,
-      ativFeitas: tAtivF, ativTot: tAtivT,
-      notas: todasNotas,
-      media: mediaGeral,
-      totalChamadas: chamadas.length
-    }
-  };
-}
-
-/* ─────── GERAR IMAGEM DO RELATÓRIO MENSAL ─────── */
-function gerarImagemRelatorioMensal(dados){
-  const { aluno, score, meses, geral } = dados;
-  const W = 1080;
-  const padding = 56;
-  const cardW = W - padding * 2;
-  const headerH = 380;
-
-  // Calcula altura: sumário + cada mês + observações
-  const sumarioH = 200;
-  const mesHeaderH = 90;
-  const aulaRowH = 96;
-  const aulaRowGap = 10;
-  const mesResumoH = 70;
-  const mesGap = 40;
-  const obsHeaderH = 70;
-  const obsItemH = 90;
-  const footerH = 100;
-
-  let alturaMeses = 0;
-  meses.forEach(m => {
-    alturaMeses += mesHeaderH + m.aulas.length * (aulaRowH + aulaRowGap) - aulaRowGap + mesResumoH + mesGap;
-  });
-
-  const obs = (aluno.observacoes || []).sort((x, y) => (y.data || '').localeCompare(x.data || ''));
-  const obsAltura = obs.length ? (obsHeaderH + obs.length * (obsItemH + 8)) : 0;
-
-  const startY = headerH + 30;
-  const H = startY + sumarioH + 40 + alturaMeses + obsAltura + footerH;
-
-  const canvas = document.createElement('canvas');
-  const scale = 2;
-  canvas.width = W * scale;
-  canvas.height = H * scale;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(scale, scale);
-
-  // Fundo
-  ctx.fillStyle = '#f4f4f8';
-  ctx.fillRect(0, 0, W, H);
-
-  // Header
-  const grad = ctx.createLinearGradient(0, 0, W, headerH);
-  grad.addColorStop(0, '#4f46e5');
-  grad.addColorStop(0.5, '#6366f1');
-  grad.addColorStop(1, '#8b5cf6');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, headerH);
-
-  ctx.globalAlpha = 0.08;
-  ctx.fillStyle = '#fff';
-  ctx.beginPath(); ctx.arc(W - 100, 60, 220, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(80, headerH - 40, 160, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 1;
-
-  ctx.fillStyle = '#fff';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.globalAlpha = 0.85;
-  ctx.fillText('RELATÓRIO DO ALUNO', W / 2, 60);
-  ctx.globalAlpha = 1;
-
-  // Nome (com quebra se necessário)
-  ctx.font = 'bold 54px -apple-system, BlinkMacSystemFont, sans-serif';
-  const nomeLinhas = quebrarTexto(ctx, aluno.nome, W - padding * 2);
-  nomeLinhas.slice(0, 2).forEach((linha, i) => {
-    ctx.fillText(linha, W / 2, 130 + i * 60);
-  });
-
-  // Turma
-  ctx.globalAlpha = 0.9;
-  ctx.font = '500 32px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillText(aluno.turma, W / 2, 270);
-  ctx.globalAlpha = 1;
-
-  // Score grande
-  ctx.font = 'bold 60px -apple-system, BlinkMacSystemFont, sans-serif';
-  const scoreY = 330;
-  ctx.fillText(`${score}`, W / 2 - 40, scoreY);
-  ctx.font = '500 28px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.globalAlpha = 0.85;
-  ctx.fillText('/100', W / 2 + 30, scoreY + 8);
-  ctx.globalAlpha = 1;
-
-  let y = startY;
-
-  // ─── Sumário geral ───
-  ctx.fillStyle = '#fff';
-  ctx.shadowColor = 'rgba(15, 23, 42, 0.08)';
-  ctx.shadowBlur = 20;
-  ctx.shadowOffsetY = 4;
-  drawRoundedRect(ctx, padding, y, cardW, sumarioH - 20, 24);
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetY = 0;
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  const metricas = [
-    { lbl: 'FREQUÊNCIA', val: geral.freq != null ? geral.freq + '%' : '—', cor: '#10b981' },
-    { lbl: 'MÉDIA', val: geral.media != null ? geral.media.toFixed(2) : '—', cor: '#2563eb' },
-    { lbl: 'TRABALHOS', val: geral.trabTot ? Math.round(geral.trabFeitos/geral.trabTot*100) + '%' : '—', cor: '#6366f1' },
-    { lbl: 'PROVAS', val: geral.provTot ? Math.round(geral.provFeitas/geral.provTot*100) + '%' : '—', cor: '#8b5cf6' }
-  ];
-  const colW = (cardW - 40) / 4;
-  metricas.forEach((m, i) => {
-    const cx = padding + 20 + colW * i + colW / 2;
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText(m.lbl, cx, y + 45);
-    ctx.fillStyle = m.cor;
-    ctx.font = 'bold 48px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText(m.val, cx, y + 105);
-  });
-
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
-  const txtAus = `Presenças: ${geral.pres} · Faltas: ${geral.aus} · Justificadas: ${geral.jus}`;
-  ctx.fillText(txtAus, W / 2, y + sumarioH - 45);
-
-  y += sumarioH + 20;
-
-  // ─── Meses ───
-  if(!meses.length){
-    ctx.fillStyle = '#fff';
-    drawRoundedRect(ctx, padding, y, cardW, 120, 24);
-    ctx.fill();
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '500 28px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Nenhum registro de chamada ainda', W / 2, y + 60);
-    y += 120;
-  } else {
-    meses.forEach((mes, idxMes) => {
-      // Header do mês
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-
-      ctx.fillStyle = '#0a1428';
-      ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.fillText(mes.nomeMes, padding, y + 40);
-
-      // Badge de frequência à direita
-      ctx.textAlign = 'right';
-      if(mes.freq != null){
-        const corFreq = mes.freq >= 90 ? '#10b981' : mes.freq >= 75 ? '#f59e0b' : '#ef4444';
-        ctx.fillStyle = corFreq;
-        ctx.font = 'bold 34px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.fillText(`${mes.freq}%`, W - padding, y + 40);
-      }
-
-      // Linha divisória
-      ctx.strokeStyle = 'rgba(10, 20, 40, 0.08)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(padding, y + mesHeaderH - 20);
-      ctx.lineTo(W - padding, y + mesHeaderH - 20);
-      ctx.stroke();
-
-      y += mesHeaderH;
-
-      // Aulas do mês
-      mes.aulas.forEach(aula => {
-        const stInfo = STATUS_ATA[aula.status];
-
-        // Card da aula
-        ctx.fillStyle = '#fff';
-        ctx.shadowColor = 'rgba(15, 23, 42, 0.05)';
-        ctx.shadowBlur = 10;
-        ctx.shadowOffsetY = 2;
-        drawRoundedRect(ctx, padding, y, cardW, aulaRowH, 16);
-        ctx.fill();
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetY = 0;
-
-        // Barra lateral
-        ctx.fillStyle = stInfo.cor;
-        drawRoundedRectLeft(ctx, padding, y, 6, aulaRowH, 16);
-        ctx.fill();
-
-        // Emoji status
-        ctx.font = '32px -apple-system, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(stInfo.emoji, padding + 45, y + aulaRowH/2);
-
-        // Data + horário
-        const [yy, mm, dd] = aula.data.split('-').map(Number);
-        ctx.textAlign = 'left';
-        ctx.fillStyle = '#0a1428';
-        ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.fillText(`${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}`, padding + 90, y + 34);
-
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.fillText(aula.ini, padding + 90, y + 66);
-
-        // Matéria
-        ctx.fillStyle = '#3d4d6b';
-        ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, sans-serif';
-        let materiaTxt = aula.materia;
-        const maxMatW = cardW - 200;
-        while(ctx.measureText(materiaTxt).width > maxMatW && materiaTxt.length > 10){
-          materiaTxt = materiaTxt.slice(0, -2);
-        }
-        if(materiaTxt !== aula.materia) materiaTxt = materiaTxt.slice(0, -1) + '…';
-        ctx.fillText(materiaTxt, padding + 220, y + 34);
-
-        // Status texto
-        ctx.fillStyle = stInfo.cor;
-        ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.fillText(stInfo.label, padding + 220, y + 66);
-
-        // Badges à direita (TRAB, PROV, ATIV, Nota)
-        const badges = [];
-        if(aula.registros.trabalho) badges.push({ txt: 'TRAB', cor: '#6366f1' });
-        if(aula.registros.prova) badges.push({ txt: 'PROV', cor: '#8b5cf6' });
-        if(aula.registros.atividade) badges.push({ txt: 'ATIV', cor: '#2563eb' });
-        if(aula.registros.nota != null) badges.push({ txt: 'Nota ' + aula.registros.nota, cor: '#10b981' });
-
-        if(badges.length){
-          let bx = W - padding - 16;
-          ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
-          ctx.textAlign = 'center';
-          for(let i = badges.length - 1; i >= 0; i--){
-            const b = badges[i];
-            const tw = ctx.measureText(b.txt).width + 20;
-            bx -= tw;
-            ctx.fillStyle = b.cor;
-            ctx.globalAlpha = 0.15;
-            drawRoundedRect(ctx, bx, y + aulaRowH/2 - 15, tw, 30, 15);
-            ctx.fill();
-            ctx.globalAlpha = 1;
-            ctx.fillStyle = b.cor;
-            ctx.fillText(b.txt, bx + tw/2, y + aulaRowH/2 + 1);
-            bx -= 6;
-          }
-          ctx.textAlign = 'left';
-        }
-
-        y += aulaRowH + aulaRowGap;
-      });
-
-      // Resumo do mês
-      y += 4;
-      ctx.fillStyle = '#f7faff';
-      drawRoundedRect(ctx, padding, y, cardW, mesResumoH - 12, 14);
-      ctx.fill();
-
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#7d8ba8';
-      ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
-
-      const partes = [];
-      partes.push(`${mes.totalAulas} aula${mes.totalAulas === 1 ? '' : 's'}`);
-      if(mes.freq != null) partes.push(`Freq ${mes.freq}%`);
-      if(mes.trabTot) partes.push(`Trab ${mes.trabFeitos}/${mes.trabTot}`);
-      if(mes.provTot) partes.push(`Prov ${mes.provFeitas}/${mes.provTot}`);
-      if(mes.ativTot) partes.push(`Ativ ${mes.ativFeitas}/${mes.ativTot}`);
-      if(mes.media != null) partes.push(`Média ${mes.media.toFixed(2)}`);
-
-      ctx.fillText(partes.join('  ·  '), W / 2, y + (mesResumoH - 12)/2);
-
-      y += mesResumoH + mesGap;
-    });
-  }
-
-  // ─── Observações ───
-  if(obs.length){
-    y += 10;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#0a1428';
-    ctx.font = 'bold 36px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText('Observações', padding, y + 30);
-
-    ctx.strokeStyle = 'rgba(10, 20, 40, 0.08)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(padding, y + obsHeaderH - 20);
-    ctx.lineTo(W - padding, y + obsHeaderH - 20);
-    ctx.stroke();
-
-    y += obsHeaderH;
-
-    obs.slice(0, 12).forEach(o => {
-      // Card
-      ctx.fillStyle = '#fff';
-      ctx.shadowColor = 'rgba(15, 23, 42, 0.04)';
-      ctx.shadowBlur = 8;
-      ctx.shadowOffsetY = 2;
-      drawRoundedRect(ctx, padding, y, cardW, obsItemH, 14);
-      ctx.fill();
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetY = 0;
-
-      const corTipo = o.tipo === 'positivo' ? '#10b981'
-        : o.tipo === 'negativo' ? '#ef4444'
-        : o.tipo === 'pedagogico' ? '#06b6d4'
-        : '#7d8ba8';
-
-      ctx.fillStyle = corTipo;
-      drawRoundedRectLeft(ctx, padding, y, 5, obsItemH, 14);
-      ctx.fill();
-
-      // Data
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, sans-serif';
-      const [oy, om, od] = o.data.split('-').map(Number);
-      ctx.fillText(`${String(od).padStart(2,'0')}/${String(om).padStart(2,'0')}/${oy}`, padding + 22, y + 26);
-
-      // Tipo (badge)
-      const tipoLabel = o.tipo === 'positivo' ? 'Positivo'
-        : o.tipo === 'negativo' ? 'Negativo'
-        : o.tipo === 'pedagogico' ? 'Pedagógico'
-        : 'Neutro';
-      ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
-      const tw = ctx.measureText(tipoLabel).width + 20;
-      ctx.fillStyle = corTipo;
-      ctx.globalAlpha = 0.15;
-      drawRoundedRect(ctx, padding + 22 + 90, y + 14, tw, 26, 13);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = corTipo;
-      ctx.textAlign = 'center';
-      ctx.fillText(tipoLabel, padding + 22 + 90 + tw/2, y + 27);
-      ctx.textAlign = 'left';
-
-      // Texto da observação (com quebra)
-      ctx.fillStyle = '#0a1428';
-      ctx.font = '500 20px -apple-system, BlinkMacSystemFont, sans-serif';
-      const maxTxtW = cardW - 44;
-      const linhas = quebrarTexto(ctx, o.texto, maxTxtW);
-      linhas.slice(0, 2).forEach((linha, li) => {
-        ctx.fillText(linha, padding + 22, y + 60 + li * 26);
-      });
-      if(linhas.length > 2){
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = 'italic 16px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.fillText('(continua...)', padding + 22, y + 60 + 52);
-      }
-
-      y += obsItemH + 8;
-    });
-
-    if(obs.length > 12){
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = 'italic 18px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`+ ${obs.length - 12} observações mais antigas`, W / 2, y + 20);
-      y += 40;
-    }
-  }
-
-  // Footer
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '500 22px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const h = new Date();
-  ctx.fillText(`Gerado em ${String(h.getDate()).padStart(2,'0')}/${String(h.getMonth()+1).padStart(2,'0')}/${h.getFullYear()} · horarioescola.netlify.app`, W / 2, H - 44);
-
-  return canvas;
-}
-
-/* ─────── GERAR TEXTO DO RELATÓRIO MENSAL ─────── */
-function gerarTextoRelatorioMensal(dados){
-  const { aluno, score, meses, geral } = dados;
-  const n = NIVEL_MAP[aluno.nivel] || NIVEL_MAP.bom;
-
-  const linhas = [];
-  linhas.push(`📊 *RELATÓRIO DO ALUNO*`);
-  linhas.push(`👤 *${aluno.nome}*`);
-  linhas.push(`🏫 Turma: ${aluno.turma}`);
-  linhas.push(`⭐ Desempenho: ${n.nome}  ·  Score: *${score}/100*`);
-  linhas.push(``);
-  linhas.push(`━━━━━━━━━━━━━━━━━`);
-  linhas.push(`*RESUMO GERAL*`);
-  if(geral.freq != null) linhas.push(`📅 Frequência: *${geral.freq}%*  (${geral.pres}P · ${geral.aus}A · ${geral.jus}J)`);
-  if(geral.media != null) linhas.push(`📝 Média de notas: *${geral.media.toFixed(2)}* (${geral.notas.length} aval.)`);
-  if(geral.trabTot) linhas.push(`📚 Trabalhos: *${geral.trabFeitos}/${geral.trabTot}* (${Math.round(geral.trabFeitos/geral.trabTot*100)}%)`);
-  if(geral.provTot) linhas.push(`✏️ Provas: *${geral.provFeitas}/${geral.provTot}* (${Math.round(geral.provFeitas/geral.provTot*100)}%)`);
-  if(geral.ativTot) linhas.push(`✅ Atividades: *${geral.ativFeitas}/${geral.ativTot}* (${Math.round(geral.ativFeitas/geral.ativTot*100)}%)`);
-
-  if(!meses.length){
-    linhas.push(``);
-    linhas.push(`_Nenhum registro de chamada ainda._`);
-  } else {
-    meses.forEach(mes => {
-      linhas.push(``);
-      linhas.push(`━━━━━━━━━━━━━━━━━`);
-      linhas.push(`📅 *${mes.nomeMes.toUpperCase()}*`);
-      const sub = [];
-      if(mes.freq != null) sub.push(`Freq ${mes.freq}%`);
-      if(mes.trabTot) sub.push(`Trab ${mes.trabFeitos}/${mes.trabTot}`);
-      if(mes.provTot) sub.push(`Prov ${mes.provFeitas}/${mes.provTot}`);
-      if(mes.ativTot) sub.push(`Ativ ${mes.ativFeitas}/${mes.ativTot}`);
-      if(mes.media != null) sub.push(`Média ${mes.media.toFixed(2)}`);
-      linhas.push(`_${sub.join(' · ')}_`);
-      linhas.push(``);
-
-      mes.aulas.forEach(aula => {
-        const stInfo = STATUS_ATA[aula.status];
-        const [yy, mm, dd] = aula.data.split('-').map(Number);
-        const dia = `${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}`;
-        const badges = [];
-        if(aula.registros.trabalho) badges.push('TRAB');
-        if(aula.registros.prova) badges.push('PROV');
-        if(aula.registros.atividade) badges.push('ATIV');
-        if(aula.registros.nota != null) badges.push(`Nota ${aula.registros.nota}`);
-
-        const sufixo = badges.length ? `  _[${badges.join(', ')}]_` : '';
-        linhas.push(`${stInfo.emoji} *${dia}* ${aula.ini} · ${aula.materia}${sufixo}`);
-      });
-    });
-  }
-
-  const obs = (aluno.observacoes || []).sort((x, y) => (y.data || '').localeCompare(x.data || ''));
-  if(obs.length){
-    linhas.push(``);
-    linhas.push(`━━━━━━━━━━━━━━━━━`);
-    linhas.push(`📝 *OBSERVAÇÕES*`);
-    linhas.push(``);
-    obs.slice(0, 15).forEach(o => {
-      const [oy, om, od] = o.data.split('-').map(Number);
-      const tipo = o.tipo === 'positivo' ? '🟢 Positivo'
-        : o.tipo === 'negativo' ? '🔴 Negativo'
-        : o.tipo === 'pedagogico' ? '🔵 Pedagógico'
-        : '⚪ Neutro';
-      linhas.push(`*${String(od).padStart(2,'0')}/${String(om).padStart(2,'0')}/${oy}* · ${tipo}`);
-      linhas.push(`_${o.texto}_`);
-      linhas.push(``);
-    });
-    if(obs.length > 15){
-      linhas.push(`_+ ${obs.length - 15} observações mais antigas_`);
-    }
-  }
-
-  linhas.push(``);
-  linhas.push(`━━━━━━━━━━━━━━━━━`);
-  linhas.push(`— ${S.config.nomeProf || 'Professor'}`);
-
-  return linhas.join('\n');
-}
-
-/* ─────── MODAL: opções de relatório ─────── */
-function abrirRelatorioMensal(alunoId){
-  const aluno = S.alunos.find(x => x.id === alunoId);
-  if(!aluno){ toast('Aluno não encontrado'); return; }
-
-  const dados = coletarDadosRelatorioMensal(aluno);
-  const { score, meses, geral } = dados;
-  const n = NIVEL_MAP[aluno.nivel] || NIVEL_MAP.bom;
-
-  // Prévia rápida
-  const resumo = [
-    `Score ${score}/100 · ${n.nome}`,
-    geral.freq != null ? `Freq ${geral.freq}%` : null,
-    geral.media != null ? `Média ${geral.media.toFixed(2)}` : null,
-    `${meses.length} mês${meses.length === 1 ? '' : 'es'} com registros`
-  ].filter(Boolean).join('  ·  ');
-
-  abrirModal(`
-    <h2>Relatório do aluno</h2>
-    <div class="perfil-head" style="margin-bottom:16px">
-      <div class="avatar" style="background:linear-gradient(135deg,${corDe(aluno.nome)},${corDe(aluno.nome)}cc);width:56px;height:56px;flex:0 0 56px;font-size:20px">${iniciais(aluno.nome)}</div>
-      <div style="flex:1;min-width:0">
-        <div class="nome" style="font-size:16px">${esc(aluno.nome)}</div>
-        <div class="turma">${esc(aluno.turma)}</div>
-      </div>
-    </div>
-
-    <div style="background:var(--card-2);border-radius:14px;padding:14px;margin-bottom:16px;font-size:13px;color:var(--text-2);font-weight:600;line-height:1.5">
-      ${ico('i-chart','ico-14')} ${esc(resumo)}
-    </div>
-
-    <div style="font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:10px">
-      ${ico('i-share','ico-14')} Compartilhar relatório
-    </div>
-
-    <button class="share-btn" id="rel-img" style="margin-bottom:10px">
-      ${ico('i-chart','ico-20')}
-      <div style="text-align:left;flex:1">
-        <div>Relatório completo em imagem</div>
-        <small style="display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:3px">
-          PNG · Todos os meses, aulas, notas e observações
-        </small>
-      </div>
-    </button>
-
-    <button class="share-btn" id="rel-txt">
-      ${ico('i-note','ico-20')}
-      <div style="text-align:left;flex:1">
-        <div>Relatório completo em texto</div>
-        <small style="display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:3px">
-          Formato WhatsApp · Ideal para colar em conversa
-        </small>
-      </div>
-    </button>
-
-    <div class="botoes-f">
-      <button class="btn-f secundario" id="btn-fechar">Cancelar</button>
-    </div>
-  `);
-
-  $('#btn-fechar').onclick = fecharModal;
-
-  $('#rel-img').onclick = async () => {
-    fecharModal();
-    toast('Gerando relatório...');
-    try{
-      const canvas = gerarImagemRelatorioMensal(dados);
-      const nome = `relatorio-${aluno.nome.toLowerCase().replace(/\s+/g,'-').slice(0,30)}.png`;
-      await compartilharAtaImagem(canvas, nome, 'Relatório — ' + aluno.nome);
-    }catch(e){
-      console.error(e);
-      toast('Erro ao gerar relatório');
-    }
-  };
-
-  $('#rel-txt').onclick = async () => {
-    fecharModal();
-    const texto = gerarTextoRelatorioMensal(dados);
-    await compartilharTexto('Relatório — ' + aluno.nome, texto);
-  };
-}
 function init(){
   carregarTudo();
   aplicarTema();

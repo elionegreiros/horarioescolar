@@ -1,4 +1,4 @@
-const CACHE_NAME = 'horario-v12';
+const CACHE_NAME = 'horario-v14';
 const ASSETS = [
   './',
   './index.html',
